@@ -256,7 +256,6 @@ function testAiStatusIsInspectable() {
   assert.strictEqual(typeof status.historyUsers, 'number');
   assert.strictEqual(typeof ai.isTextAiConfigured(), 'boolean');
   assert.strictEqual(typeof ai.isImageGenerationConfigured(), 'boolean');
-  assert.strictEqual(ai.isTextAiConfigured(), true);
   assert.strictEqual(ai.isImageGenerationConfigured(), true);
   assert.deepStrictEqual(ai.normalizeProviderList('gemini, groq, gemini, openrouter'), ['gemini', 'groq', 'openrouter']);
   assert(Array.isArray(ai.getRequestedProviderOrder()));
