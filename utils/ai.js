@@ -57,7 +57,7 @@ function isProviderConfigured(provider) {
   if (provider === 'groq') return Boolean(config.groqApiKey);
   if (provider === 'openrouter') return Boolean(config.openrouterApiKey);
   if (provider === 'huggingface') return Boolean(config.huggingFaceToken);
-  if (provider === 'pollinations') return true;
+  if (provider === 'pollinations') return Boolean(config.pollinationsApiKey);
   if (provider === 'ollama') return Boolean(config.ollamaBaseUrl && config.ollamaModel);
 
   return false;
