@@ -445,8 +445,8 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 
 # สร้างภาพใน LINE ต้องมี URL สาธารณะ HTTPS ให้ LINE โหลดรูปได้
-IMAGE_PROVIDER=auto
-IMAGE_FALLBACK_PROVIDERS=openai,huggingface,pollinations
+IMAGE_PROVIDER=pollinations
+IMAGE_FALLBACK_PROVIDERS=pollinations,openai,huggingface
 OPENAI_API_KEY=...
 OPENAI_IMAGE_MODEL=gpt-image-1-mini
 PUBLIC_BASE_URL=https://your-public-domain.example.com
@@ -466,4 +466,4 @@ LIFF_ID=your_liff_id
 - `OpenAI Images` ใช้เฉพาะสร้างภาพ ต้องมี key และ public HTTPS URL; ถ้าต้องการคุณภาพสูงกว่าค่าเริ่มต้นให้ตั้ง `OPENAI_IMAGE_MODEL=gpt-image-2`
 
 เมื่อใช้ `AI_PROVIDER=auto` ระบบจะลองตามลำดับใน `AI_FALLBACK_PROVIDERS` เฉพาะตัวที่ตั้งค่า key ครบ ถ้าตัวแรกหมดโควตา ล่ม หรือ timeout จะข้ามไปตัวถัดไปโดยอัตโนมัติ
-เมื่อใช้ `IMAGE_PROVIDER=auto` ระบบจะลองสร้างภาพจาก OpenAI ก่อน แล้วสำรองด้วย Hugging Face และ Pollinations ถ้าตั้งค่าไว้ครบ
+ค่าเริ่มต้นของระบบสร้างภาพใช้ `IMAGE_PROVIDER=pollinations` เพื่อให้ใช้งานได้แม้ยังไม่มี OpenAI หรือ Hugging Face key
