@@ -54,6 +54,19 @@ function pushMessage(message) {
   });
 }
 
+function pushMessageTo(to, message) {
+  validateLineAccessToken();
+
+  if (!to) {
+    throw new Error('LINE recipient is not configured');
+  }
+
+  return client.pushMessage({
+    to,
+    messages: normalizeMessages(message)
+  });
+}
+
 async function sendMessage(text) {
   return pushMessage(text);
 }
@@ -254,6 +267,7 @@ module.exports = {
   reply,
   replyMessage,
   pushMessage,
+  pushMessageTo,
   sendMessage,
   sendAppointmentReminder,
   sendMorningGreeting,
