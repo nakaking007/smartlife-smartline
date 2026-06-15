@@ -1532,10 +1532,12 @@ function buildImagePromptReviewMessage(prompt) {
   };
 }
 
-function buildImageResultMessages(imageMessage) {
+function buildImageResultMessages(imageMessage, prompt) {
   if (!imageMessage || imageMessage.type !== 'image' || !imageMessage.originalContentUrl) {
     return imageMessage;
   }
+
+  const reviewPrompt = prompt && (typeof prompt === 'string' ? prompt : prompt.reviewPrompt);
 
   return [
     imageMessage,
@@ -1544,8 +1546,11 @@ function buildImageResultMessages(imageMessage) {
       text: [
         'สร้างภาพแล้วค่ะ',
         'ดาวน์โหลด/เปิดภาพจากลิงก์นี้ได้:',
-        imageMessage.originalContentUrl
-      ].join("\n"),
+        imageMessage.originalContentUrl,
+        reviewPrompt ? '' : null,
+        reviewPrompt ? 'Image prompt for editing:' : null,
+        reviewPrompt ? reviewPrompt : null
+      ].filter(Boolean).join("\n"),
       quickReply: {
         items: [
           {
@@ -2711,7 +2716,7 @@ async function handleTextMessage(event) {
         size: '1024x1024'
       });
       pendingModes.delete(userId);
-      await line.replyMessage(event.replyToken, buildImageResultMessages(imageMessage));
+      await line.replyMessage(event.replyToken, buildImageResultMessages(imageMessage, pendingMode));
       return true;
     }
 
@@ -2724,8 +2729,11 @@ async function handleTextMessage(event) {
 
     if (pendingMode.type === 'image_prompt' || pendingMode.type === 'image_review') {
       const prompt = await buildImagePromptFromDescription(text, pendingMode.hasSourceImage);
-      pendingModes.set(userId, { ...pendingMode, type: 'image_review', ...prompt });
-      await line.replyMessage(event.replyToken, buildImagePromptReviewMessage(prompt));
+      const imageMessage = await ai.generateImage(prompt.generationPrompt, {
+        size: '1024x1024'
+      });
+      pendingModes.delete(userId);
+      await line.replyMessage(event.replyToken, buildImageResultMessages(imageMessage, prompt));
       return true;
     }
   }
@@ -2934,10 +2942,13 @@ async function handleTextMessage(event) {
   const imageMatch = text.match(/^\/?(?:สร้างภาพ|วาดภาพ|ทำภาพ)\s+([\s\S]+)$/i);
   if (imageMatch) {
     const prompt = await buildImagePromptFromDescription(imageMatch[1]);
+    const imageMessage = await ai.generateImage(prompt.generationPrompt, {
+      size: '1024x1024'
+    });
     if (userId) {
-      pendingModes.set(userId, { type: 'image_review', hasSourceImage: false, ...prompt });
+      pendingModes.delete(userId);
     }
-    await line.replyMessage(event.replyToken, buildImagePromptReviewMessage(prompt));
+    await line.replyMessage(event.replyToken, buildImageResultMessages(imageMessage, prompt));
     return true;
   }
 
