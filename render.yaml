@@ -6,29 +6,39 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
-    autoDeploy: true
+    autoDeploy: false
     envVars:
-      - key: APP_TIMEZONE
+      - key: TZ
         value: Asia/Bangkok
-      - key: LINE_SKIP_SIGNATURE_VERIFY
-        value: "false"
-      - key: ENABLE_USGS_EARTHQUAKE_ALERTS
-        value: "true"
-      - key: USGS_EARTHQUAKE_FEED
-        value: https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson
-      - key: USGS_EARTHQUAKE_MIN_MAGNITUDE
-        value: "4.5"
-      - key: USGS_EARTHQUAKE_MAX_AGE_MINUTES
-        value: "180"
       - key: MONGODB_URI
         sync: false
-      - key: LINE_CHANNEL_SECRET
+      - key: MONGODB_DNS_SERVERS
+        value: 8.8.8.8,1.1.1.1
+      - key: LINE_ACCESS_TOKEN
         sync: false
-      - key: LINE_CHANNEL_ACCESS_TOKEN
+      - key: LINE_USER_ID
+        sync: false
+      - key: WEATHER_API_KEY
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
-      - key: ADMIN_API_KEY
+      - key: LIFF_ID
         sync: false
-      - key: ALERT_INGEST_API_KEY
+      - key: AI_PROVIDER
+        value: auto
+      - key: AI_FALLBACK_PROVIDERS
+        value: gemini,groq,openrouter,huggingface,pollinations
+      - key: IMAGE_PROVIDER
+        value: auto
+      - key: IMAGE_FALLBACK_PROVIDERS
+        value: openai,huggingface,pollinations
+      - key: POLLINATIONS_API_KEY
         sync: false
+      - key: POLLINATIONS_TEXT_MODEL
+        value: openai
+      - key: POLLINATIONS_IMAGE_MODEL
+        value: flux
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_IMAGE_MODEL
+        value: gpt-image-1-mini

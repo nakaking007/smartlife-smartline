@@ -1,0 +1,406 @@
+// utils/appointments.js
+const mongoose = require('mongoose');
+const Appointment = require('../models/Appointment');
+const { getBangkokDayRange, getBangkokMinuteKey, parseBangkokClockTime, parseBangkokDate, setBangkokClockTime } = require('./time');
+
+const DEFAULT_REMINDER_MINUTES = [1440, 360, 60, 30];
+
+const EDITABLE_FIELDS = [
+  'title',
+  'startAt',
+  'locationName',
+  'contactName',
+  'contactPhone',
+  'contactLineId',
+  'preparation',
+  'dressCode',
+  'speechType',
+  'status'
+];
+
+function getReminderMinutes(appointment) {
+  const minutes = new Set(DEFAULT_REMINDER_MINUTES);
+
+  if (Array.isArray(appointment.reminders) && appointment.reminders.length > 0) {
+    appointment.reminders
+      .map(reminder => reminder.minutesBefore)
+      .filter(value => typeof value === 'number')
+      .forEach(value => minutes.add(value));
+  }
+
+  if (typeof appointment.reminderMinutesBefore === 'number') {
+    minutes.add(appointment.reminderMinutesBefore);
+  }
+
+  return [...minutes].sort((a, b) => b - a);
+}
+
+function rebuildReminders(appointment, options = {}) {
+  if (!appointment.startAt) {
+    return;
+  }
+
+  const preserveSent = options.preserveSent !== false;
+  const startMs = appointment.startAt.getTime();
+  const minutesList = getReminderMinutes(appointment);
+  const firstMinutes = minutesList[0] || 1440;
+  const existingReminders = Array.isArray(appointment.reminders) ? appointment.reminders : [];
+
+  appointment.reminderMinutesBefore = firstMinutes;
+  appointment.remindAt = new Date(startMs - firstMinutes * 60 * 1000);
+  appointment.reminders = minutesList.map(minutesBefore => {
+    const existing = existingReminders.find(reminder => reminder.minutesBefore === minutesBefore);
+
+    return {
+      minutesBefore,
+      remindAt: new Date(startMs - minutesBefore * 60 * 1000),
+      sentAt: preserveSent && existing ? existing.sentAt : undefined
+    };
+  });
+}
+
+function buildGoogleMapUrl(locationName) {
+  if (!locationName) {
+    return '';
+  }
+
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationName)}`;
+}
+
+function normalizeText(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function getDuplicateKey(appointment) {
+  if (!appointment.startAt) {
+    return null;
+  }
+
+  const titleKey = normalizeText(appointment.title);
+  if (!titleKey) {
+    return null;
+  }
+
+  return `${titleKey}|${getBangkokMinuteKey(appointment.startAt)}`;
+}
+
+function getMinuteRange(date) {
+  const start = new Date(date);
+  start.setSeconds(0, 0);
+  const end = new Date(start.getTime() + 60 * 1000);
+
+  return { start, end };
+}
+
+async function assertNoDuplicateAppointment(appointment) {
+  const duplicateKey = getDuplicateKey(appointment);
+  if (!duplicateKey || appointment.status === 'deleted') {
+    return;
+  }
+
+  const { start, end } = getMinuteRange(appointment.startAt);
+  const candidates = await Appointment.find({
+    _id: { $ne: appointment._id },
+    status: { $ne: 'deleted' },
+    startAt: { $gte: start, $lt: end }
+  }).limit(20);
+  const duplicate = candidates.find(candidate => getDuplicateKey(candidate) === duplicateKey);
+
+  if (duplicate) {
+    throw new Error(`Duplicate appointment: ${appointment.title || '-'} at ${getBangkokMinuteKey(appointment.startAt)}`);
+  }
+}
+
+async function listAppointments(filters = {}) {
+  const query = {};
+
+  if (filters.status) {
+    query.status = filters.status;
+  }
+
+  if (filters.activeOnly) {
+    query.status = { $ne: 'deleted' };
+  }
+
+  if (filters.startAtFrom || filters.startAtTo) {
+    query.startAt = {};
+    if (filters.startAtFrom) {
+      query.startAt.$gte = filters.startAtFrom;
+    }
+    if (filters.startAtTo) {
+      query.startAt.$lte = filters.startAtTo;
+    }
+  }
+
+  return Appointment.find(query).sort({ startAt: 1 }).limit(filters.limit || 50);
+}
+
+async function createAppointment(changes = {}) {
+  const appointment = new Appointment({
+    ...changes,
+    title: changes.title || changes.summary || 'นัดหมาย',
+    startAt: parseBangkokDate(changes.startAt),
+    status: changes.status || 'scheduled'
+  });
+
+  if (!appointment.startAt) {
+    throw new Error('Appointment startAt is required');
+  }
+
+  if (appointment.locationName) {
+    appointment.location = { label: appointment.locationName };
+    appointment.mapUrl = buildGoogleMapUrl(appointment.locationName);
+  }
+
+  rebuildReminders(appointment, { preserveSent: false });
+  await assertNoDuplicateAppointment(appointment);
+
+  return appointment.save();
+}
+
+async function getAppointment(id) {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new Error('Invalid appointment id');
+  }
+
+  const appointment = await Appointment.findById(id);
+  if (!appointment || appointment.status === 'deleted') {
+    throw new Error('Appointment not found');
+  }
+
+  return appointment;
+}
+
+async function getToday(baseDate = new Date()) {
+  const { start, end } = getBangkokDayRange(baseDate);
+
+  return Appointment.find({
+    startAt: { $gte: start, $lte: end },
+    status: { $ne: 'deleted' }
+  }).sort({ startAt: 1 });
+}
+
+async function findDueReminders(now = new Date()) {
+  const appointments = await Appointment.find({
+    startAt: { $gte: now },
+    status: { $ne: 'deleted' }
+  }).sort({ startAt: 1 }).limit(200);
+  const due = [];
+
+  for (const appointment of appointments) {
+    rebuildReminders(appointment);
+
+    const dueReminders = appointment.reminders.filter(reminder => (
+      !reminder.sentAt &&
+      reminder.remindAt &&
+      reminder.remindAt <= now
+    )).sort((a, b) => b.remindAt.getTime() - a.remindAt.getTime());
+
+    if (dueReminders.length > 0) {
+      const [latestReminder, ...staleReminders] = dueReminders;
+      staleReminders.forEach(reminder => {
+        reminder.sentAt = now;
+      });
+      due.push({ appointment, reminders: [latestReminder] });
+    }
+  }
+
+  return due;
+}
+
+async function markReminderSent(appointment, minutesBefore, sentAt = new Date()) {
+  const reminder = appointment.reminders.find(item => item.minutesBefore === minutesBefore);
+
+  if (reminder) {
+    reminder.sentAt = sentAt;
+  }
+
+  if (appointment.status !== 'deleted') {
+    appointment.status = 'scheduled';
+  }
+
+  return appointment.save();
+}
+
+async function updateAppointment(id, changes) {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new Error('Invalid appointment id');
+  }
+
+  const appointment = await Appointment.findById(id);
+  if (!appointment) {
+    throw new Error('Appointment not found');
+  }
+
+  const previousStartAt = appointment.startAt ? appointment.startAt.getTime() : null;
+
+  for (const field of EDITABLE_FIELDS) {
+    if (changes[field] !== undefined) {
+      appointment[field] = field === 'startAt' ? parseBangkokDate(changes[field]) : changes[field];
+    }
+  }
+
+  if (changes.startTime !== undefined) {
+    appointment.startAt = setBangkokClockTime(appointment.startAt, changes.startTime);
+  }
+
+  if (changes.locationName !== undefined) {
+    appointment.location = { label: changes.locationName };
+    appointment.mapUrl = buildGoogleMapUrl(changes.locationName);
+  }
+
+  if (changes.startAt !== undefined || changes.startTime !== undefined) {
+    const nextStartAt = appointment.startAt ? appointment.startAt.getTime() : null;
+    rebuildReminders(appointment, { preserveSent: previousStartAt === nextStartAt });
+    if (appointment.status === 'reminded') {
+      appointment.status = 'scheduled';
+    }
+  }
+
+  await assertNoDuplicateAppointment(appointment);
+
+  return appointment.save();
+}
+
+async function deleteAppointment(id) {
+  return updateAppointment(id, { status: 'deleted' });
+}
+
+function parseEditText(text, pendingAppointmentId) {
+  const trimmed = String(text || '').trim();
+  const directMatch = trimmed.match(/^(?:แก้นัดหมาย|แก้ไขนัดหมาย|แก้)\s+([a-f\d]{24})\s*\|\s*(.+)$/i);
+  const directTimeOnlyMatch = trimmed.match(/^(?:แก้เวลา|เวลา|ตั้งเวลา)\s+([a-f\d]{24})\s+(.+)$/i);
+  const pendingTimeOnlyMatch = pendingAppointmentId && parseBangkokClockTime(trimmed)
+    ? { id: pendingAppointmentId, body: trimmed }
+    : null;
+  const pendingMatch = pendingAppointmentId && trimmed.includes('|')
+    ? { id: pendingAppointmentId, body: trimmed }
+    : null;
+
+  if (directTimeOnlyMatch || pendingTimeOnlyMatch) {
+    return {
+      id: directTimeOnlyMatch ? directTimeOnlyMatch[1] : pendingTimeOnlyMatch.id,
+      changes: {
+        startTime: directTimeOnlyMatch ? directTimeOnlyMatch[2].trim() : pendingTimeOnlyMatch.body
+      }
+    };
+  }
+
+  const id = directMatch ? directMatch[1] : pendingMatch && pendingMatch.id;
+  const body = directMatch ? directMatch[2] : pendingMatch && pendingMatch.body;
+
+  if (!id || !body) {
+    return null;
+  }
+
+  const parts = body.split('|').map(part => part.trim());
+  const changes = {};
+
+  if (parts[0]) {
+    changes.title = parts[0];
+  }
+
+  if (parts[1]) {
+    changes.startAt = parts[1];
+  }
+
+  if (parts[2]) {
+    changes.locationName = parts[2];
+  }
+
+  if (parts[3]) {
+    changes.dressCode = parts[3];
+  }
+
+  return {
+    id,
+    changes
+  };
+}
+
+function parseCreateText(text) {
+  const trimmed = String(text || '').trim();
+  const match = trimmed.match(/^\/?(?:บันทึกนัดหมาย|เพิ่มนัดหมาย|สร้างนัดหมาย|นัดหมายใหม่)\s*\|\s*([\s\S]+)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const parts = match[1].split('|').map(part => part.trim());
+  if (!parts[0] || !parts[1]) {
+    return null;
+  }
+
+  return {
+    title: parts[0],
+    startAt: parts[1],
+    locationName: parts[2] || '',
+    dressCode: parts[3] || '',
+    preparation: parts[4] || ''
+  };
+}
+
+function parseDeleteText(text) {
+  const match = String(text || '').trim().match(/^(?:ลบนัดหมาย|ลบ)\s+([a-f\d]{24})$/i);
+  return match ? match[1] : null;
+}
+
+function parseEditTargetText(text) {
+  const match = String(text || '').trim().match(/^(?:แก้นัดหมาย|แก้ไขนัดหมาย|แก้)\s+([a-f\d]{24})$/i);
+  return match ? match[1] : null;
+}
+
+function parseSelectionCommand(text) {
+  const trimmed = String(text || '').trim();
+  const editMatch = trimmed.match(/^(?:แก้นัดหมาย|แก้ไขนัดหมาย|แก้)\s+(\d{1,2})$/i);
+  if (editMatch) {
+    return { action: 'edit', index: Number(editMatch[1]) };
+  }
+
+  const deleteMatch = trimmed.match(/^(?:ลบนัดหมาย|ลบ)\s+(\d{1,2})$/i);
+  if (deleteMatch) {
+    return { action: 'delete', index: Number(deleteMatch[1]) };
+  }
+
+  return null;
+}
+
+async function findPotentialDuplicates() {
+  const appointments = await Appointment.find({ status: { $ne: 'deleted' } })
+    .sort({ startAt: 1 })
+    .limit(200);
+  const groups = new Map();
+
+  for (const appointment of appointments) {
+    const key = getDuplicateKey(appointment);
+    if (!key) {
+      continue;
+    }
+
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+
+    groups.get(key).push(appointment);
+  }
+
+  return [...groups.values()].filter(group => group.length > 1);
+}
+
+module.exports = {
+  listAppointments,
+  createAppointment,
+  getAppointment,
+  getToday,
+  findDueReminders,
+  markReminderSent,
+  updateAppointment,
+  deleteAppointment,
+  parseCreateText,
+  parseEditText,
+  parseDeleteText,
+  parseEditTargetText,
+  parseSelectionCommand,
+  getDuplicateKey,
+  findPotentialDuplicates
+};

@@ -1,25 +1,22 @@
 {
-  "name": "smartlife",
+  "name": "smartlife-scheduler",
   "version": "1.0.0",
-  "description": "LINE-first MVP for appointments and emergency alerts.",
+  "description": "SmartLife Scheduler & Alert",
   "main": "server.js",
   "scripts": {
-    "check:config": "node scripts/checkConfig.js",
-    "check:syntax": "node --check server.js && node --check routes/alerts.js && node --check routes/lineWebhook.js && node --check services/rssAlertIngestor.js",
-    "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check cron.js && node --check models.js && node --check models/User.js && node --check models/Appointment.js && node --check models/Alert.js && node --check models/Todo.js && node --check models/WarningHistory.js && node --check controllers/userController.js && node --check routes/userRoutes.js && node --check routes/appointments.js && node --check routes/todos.js && node --check routes/earthquakeWarnings.js && node --check utils/time.js && node --check utils/line.js && node --check utils/weather.js && node --check utils/weatherQuestions.js && node --check utils/tasks.js && node --check utils/mongoDns.js && node --check utils/appointments.js && node --check utils/todos.js && node --check utils/alerts.js && node --check utils/earthquakeWarnings.js && node --check utils/riskAssessment.js && node --check utils/liveDisasters.js && node --check utils/freeServices.js && node --check utils/knowledge.js && node --check utils/scamCheck.js && node --check utils/speech.js && node --check utils/manual.js && node --check utils/ai.js && node --check tests/smoke.js",
+    "test": "npm run check && node tests/smoke.js"
   },
   "dependencies": {
-    "axios": "^1.7.9",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "fast-xml-parser": "^5.8.0",
-    "mongoose": "^8.9.5",
-    "node-cron": "^3.0.3"
-  },
-  "devDependencies": {
-    "localtunnel": "^2.0.2",
-    "nodemon": "^3.1.9"
+    "@huggingface/inference": "^4.13.18",
+    "@line/bot-sdk": "^11.0.0",
+    "axios": "^1.6.0",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "mongoose": "^7.0.3",
+    "node-cron": "^4.2.1"
   }
 }
