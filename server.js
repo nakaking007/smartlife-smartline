@@ -3067,8 +3067,10 @@ async function handleImageMessage(event) {
 }
 
 async function handleLineWebhook(req, res) {
+  let event;
+
   try {
-    const event = req.body.events && req.body.events[0];
+    event = req.body.events && req.body.events[0];
     if (!event) {
       return res.sendStatus(200);
     }
@@ -3121,7 +3123,17 @@ async function handleLineWebhook(req, res) {
     res.sendStatus(200);
   } catch (err) {
     console.error("LINE webhook error:", err);
-    res.sendStatus(500);
+
+    const userId = event && event.source && event.source.userId;
+    if (userId) {
+      try {
+        await line.pushMessageTo(userId, 'SmartLife received your message, but the reply card failed. Please type / again.');
+      } catch (pushErr) {
+        console.error("LINE webhook fallback push error:", pushErr);
+      }
+    }
+
+    res.sendStatus(200);
   }
 }
 
