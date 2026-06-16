@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const Appointment = require('../models/Appointment');
 const { getBangkokDayRange, getBangkokMinuteKey, parseBangkokClockTime, parseBangkokDate, setBangkokClockTime } = require('./time');
 
-const DEFAULT_REMINDER_MINUTES = [1440, 360, 60, 30];
+const DEFAULT_REMINDER_MINUTES = [1440, 180, 60];
 
 const EDITABLE_FIELDS = [
   'title',
