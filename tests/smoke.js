@@ -89,9 +89,14 @@ async function testReminderSelectionDoesNotSpam() {
     const due = await appointments.findDueReminders(now);
     assert.strictEqual(due.length, 1);
     assert.strictEqual(due[0].reminders.length, 1);
-    assert.strictEqual(due[0].reminders[0].minutesBefore, 30);
+    assert.strictEqual(due[0].reminders[0].minutesBefore, 60);
 
-    const staleReminders = appointment.reminders.filter(reminder => reminder.minutesBefore !== 30);
+    assert.deepStrictEqual(
+      appointment.reminders.map(reminder => reminder.minutesBefore).sort((a, b) => b - a),
+      [1440, 180, 60]
+    );
+
+    const staleReminders = appointment.reminders.filter(reminder => reminder.minutesBefore !== 60);
     assert(staleReminders.length > 0, 'Expected stale reminders to be present');
     staleReminders.forEach(reminder => {
       assert.strictEqual(reminder.sentAt, now);
