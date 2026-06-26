@@ -1,0 +1,15 @@
+name: Wake SmartLife for 06:00 report
+
+on:
+  schedule:
+    # GitHub Actions uses UTC. 22:55 UTC is 05:55 in Bangkok.
+    - cron: '55 22 * * *'
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake Render service
+        run: curl --fail --silent --show-error --retry 3 --retry-delay 10 https://smartlife-smartline2.onrender.com/health
