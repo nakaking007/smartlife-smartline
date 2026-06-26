@@ -121,10 +121,36 @@ async function sendMorningReport() {
       source: report.source,
       observedAt: report.observedAt
     }, events, todoSummary);
+
+    await sendMorningActiveAlerts();
     return true;
   } catch (err) {
     console.error("SmartLife cron error:", err);
     return false;
+  }
+}
+
+async function sendMorningActiveAlerts() {
+  try {
+    if (!config.lineUserId) {
+      return 0;
+    }
+
+    await syncLiveDisasterAlerts({ force: true });
+
+    const activeAlerts = await alerts.listActiveUrgentAlerts(new Date(), 10);
+    let sentCount = 0;
+
+    for (const alert of activeAlerts) {
+      await line.pushMessage(alerts.formatAlert(alert));
+      await alerts.markAlertSent(alert._id, config.lineUserId);
+      sentCount += 1;
+    }
+
+    return sentCount;
+  } catch (err) {
+    console.error("SmartLife morning alert error:", err.message);
+    return 0;
   }
 }
 
@@ -381,10 +407,20 @@ setTimeout(() => {
   });
 }, 15000);
 
+setTimeout(async () => {
+  try {
+    await syncLiveDisasterAlerts({ force: true });
+    await sendUrgentAlerts();
+  } catch (err) {
+    console.error("SmartLife startup disaster alert error:", err.message);
+  }
+}, 5000);
+
 module.exports = {
   sendMorningReport,
   sendDailyMorningReport,
   sendMissedMorningReportIfNeeded,
+  sendMorningActiveAlerts,
   sendDueAppointmentReminders,
   sendUrgentAlerts,
   syncLiveDisasterAlerts
