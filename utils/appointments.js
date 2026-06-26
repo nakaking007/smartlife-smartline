@@ -4,6 +4,7 @@ const Appointment = require('../models/Appointment');
 const { getBangkokDayRange, getBangkokMinuteKey, parseBangkokClockTime, parseBangkokDate, setBangkokClockTime } = require('./time');
 
 const DEFAULT_REMINDER_MINUTES = [1440, 180, 60];
+const MAX_RECURRING_APPOINTMENTS = 60;
 
 const EDITABLE_FIELDS = [
   'title',
@@ -156,6 +157,60 @@ async function createAppointment(changes = {}) {
   await assertNoDuplicateAppointment(appointment);
 
   return appointment.save();
+}
+
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function normalizeRepeat(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (['daily', 'day', 'ทุกวัน'].includes(text)) return 'daily';
+  if (['weekly', 'week', 'ทุกสัปดาห์', 'ทุกอาทิตย์'].includes(text)) return 'weekly';
+  return '';
+}
+
+async function createRecurringAppointments(changes = {}) {
+  const repeat = normalizeRepeat(changes.repeat || changes.recurrence);
+  const count = Math.min(Math.max(Number(changes.count || changes.times || 1), 1), MAX_RECURRING_APPOINTMENTS);
+
+  if (!repeat || count <= 1) {
+    return [await createAppointment(changes)];
+  }
+
+  const firstStartAt = parseBangkokDate(changes.startAt);
+  if (!firstStartAt) {
+    throw new Error('Appointment startAt is required');
+  }
+
+  const items = [];
+  for (let index = 0; index < count; index += 1) {
+    const daysToAdd = repeat === 'weekly' ? index * 7 : index;
+    items.push(await createAppointment({
+      ...changes,
+      startAt: addDays(firstStartAt, daysToAdd),
+      repeat,
+      repeatIndex: index + 1,
+      repeatCount: count
+    }));
+  }
+
+  return items;
+}
+
+async function copyAppointment(id, changes = {}) {
+  const source = await getAppointment(id);
+  return createAppointment({
+    title: changes.title || source.title,
+    startAt: changes.startAt || source.startAt,
+    locationName: changes.locationName !== undefined ? changes.locationName : source.locationName,
+    dressCode: changes.dressCode !== undefined ? changes.dressCode : source.dressCode,
+    preparation: changes.preparation !== undefined ? changes.preparation : source.preparation,
+    contactName: source.contactName,
+    contactPhone: source.contactPhone,
+    contactLineId: source.contactLineId,
+    copiedFrom: source._id
+  });
 }
 
 async function getAppointment(id) {
@@ -331,12 +386,47 @@ function parseCreateText(text) {
     return null;
   }
 
-  return {
+  const payload = {
     title: parts[0],
     startAt: parts[1],
     locationName: parts[2] || '',
     dressCode: parts[3] || '',
     preparation: parts[4] || ''
+  };
+
+  const tail = parts.slice(5).join(' ');
+  const repeatMatch = tail.match(/(?:repeat|ซ้ำ)\s*=\s*(daily|weekly|ทุกวัน|ทุกสัปดาห์|ทุกอาทิตย์)/i) ||
+    tail.match(/\b(daily|weekly|ทุกวัน|ทุกสัปดาห์|ทุกอาทิตย์)\b/i);
+  const countMatch = tail.match(/(?:count|times|ครั้ง)\s*=\s*(\d{1,2})/i) ||
+    tail.match(/(\d{1,2})\s*(?:ครั้ง|รอบ)/i);
+
+  if (repeatMatch) {
+    payload.repeat = normalizeRepeat(repeatMatch[1]);
+  }
+
+  if (countMatch) {
+    payload.count = Number(countMatch[1]);
+  }
+
+  return payload;
+}
+
+function parseCopyText(text) {
+  const match = String(text || '').trim().match(/^(?:copyนัด|คัดลอกนัด|copy appointment)\s+([a-f\d]{24})\s*\|\s*([\s\S]+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const parts = match[2].split('|').map(part => part.trim());
+  return {
+    id: match[1],
+    changes: {
+      startAt: parts[0],
+      title: parts[1] || undefined,
+      locationName: parts[2] || undefined,
+      dressCode: parts[3] || undefined,
+      preparation: parts[4] || undefined
+    }
   };
 }
 
@@ -390,6 +480,8 @@ async function findPotentialDuplicates() {
 module.exports = {
   listAppointments,
   createAppointment,
+  createRecurringAppointments,
+  copyAppointment,
   getAppointment,
   getToday,
   findDueReminders,
@@ -397,6 +489,7 @@ module.exports = {
   updateAppointment,
   deleteAppointment,
   parseCreateText,
+  parseCopyText,
   parseEditText,
   parseDeleteText,
   parseEditTargetText,

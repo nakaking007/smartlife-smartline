@@ -251,6 +251,15 @@ function getBangkokDayRange(baseDate = new Date()) {
   };
 }
 
+function getBangkokWeekRange(baseDate = new Date()) {
+  const dayRange = getBangkokDayRange(baseDate);
+  const day = dayRange.start.getDay();
+  const start = new Date(dayRange.start.getTime() - day * 24 * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
+
+  return { start, end };
+}
+
 module.exports = {
   THAILAND_TIME_ZONE,
   parseBangkokDate,
@@ -260,5 +269,6 @@ module.exports = {
   formatBangkokTime,
   getBangkokDateKey,
   getBangkokMinuteKey,
-  getBangkokDayRange
+  getBangkokDayRange,
+  getBangkokWeekRange
 };

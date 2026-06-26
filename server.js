@@ -2356,7 +2356,9 @@ function buildTodoListText(items, emptyText) {
   const lines = items.slice(0, 10).map((todo, index) => [
     `${index + 1}. ${todo.title || '-'}`,
     `กำหนด: ${formatTodoDueAt(todo)}`,
+    todo.responsible ? `ผู้รับผิดชอบ: ${todo.responsible}` : null,
     `ความสำคัญ: ${formatTodoPriority(todo.priority)}`,
+    `สถานะ: ${todo.status || 'open'}`,
     todo.notes ? `หมายเหตุ: ${todo.notes}` : null,
     `ID: ${todo._id}`
   ].filter(Boolean).join("\n"));
@@ -2542,6 +2544,19 @@ async function handleTextMessage(event) {
     return true;
   }
 
+  if (['งานสัปดาห์นี้', 'todoสัปดาห์นี้', 'to-doสัปดาห์นี้'].includes(command)) {
+    const items = await todos.getThisWeek();
+    await line.replyMessage(event.replyToken, buildCommandOutputMessage({
+      title: 'To-do สัปดาห์นี้',
+      available: true,
+      detail: buildTodoListText(items, 'สัปดาห์นี้ยังไม่มี To-do ค่ะ'),
+      command: '/ปฏิทิน',
+      actionLabel: 'เปิดปฏิทิน',
+      uri: getPublicUrl('/liff/calendar')
+    }));
+    return true;
+  }
+
   if (['งานทั้งหมด', 'รายการงาน', 'to-do', 'todos'].includes(command)) {
     const items = await todos.listTodos({ openOnly: true, limit: 50 });
     await line.replyMessage(event.replyToken, buildCommandOutputMessage({
@@ -2569,7 +2584,7 @@ async function handleTextMessage(event) {
   }
 
   if (['สร้างภาพ', 'วาดภาพ', 'ทำภาพ'].includes(command)) {
-    await line.replyMessage(event.replyToken, buildImagePromptMessage(userId));
+    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
     return true;
   }
 
@@ -2640,6 +2655,17 @@ async function handleTextMessage(event) {
     return true;
   }
 
+  const completeTodoMatch = text.match(/^(?:งานเสร็จ|ปิดงาน|todo done|done)\s+([a-f\d]{24})$/i);
+  if (completeTodoMatch) {
+    try {
+      const completed = await todos.completeTodo(completeTodoMatch[1]);
+      await line.reply(event.replyToken, `บันทึกว่างานเสร็จแล้วค่ะ\n\nงาน: ${completed.title || '-'}\nID: ${completed._id}`);
+    } catch (err) {
+      await line.reply(event.replyToken, `ยังปิดงานไม่ได้ค่ะ: ${err.message}`);
+    }
+    return true;
+  }
+
   const createTodoPayload = todos.parseCreateText(text);
   if (createTodoPayload) {
     try {
@@ -2675,12 +2701,13 @@ async function handleTextMessage(event) {
   const createAppointmentPayload = appointments.parseCreateText(text);
   if (createAppointmentPayload) {
     try {
-      const created = await appointments.createAppointment(createAppointmentPayload);
+      const createdItems = await appointments.createRecurringAppointments(createAppointmentPayload);
+      const created = createdItems[0];
       await line.replyMessage(event.replyToken, buildCommandOutputMessage({
         title: 'บันทึกนัดหมาย',
         available: true,
         detail: [
-          `${created.title || '-'}`,
+          createdItems.length > 1 ? `สร้างนัดหมายซ้ำ ${createdItems.length} ครั้งแล้วค่ะ` : `${created.title || '-'}`,
           `เวลา: ${formatBangkokDate(created.startAt)}`,
           `สถานที่: ${created.locationName || '-'}`,
           `ID: ${created._id}`
@@ -2700,8 +2727,38 @@ async function handleTextMessage(event) {
     return true;
   }
 
+  const copyAppointmentPayload = appointments.parseCopyText(text);
+  if (copyAppointmentPayload) {
+    try {
+      const copied = await appointments.copyAppointment(copyAppointmentPayload.id, copyAppointmentPayload.changes);
+      await line.replyMessage(event.replyToken, buildCommandOutputMessage({
+        title: 'คัดลอกนัดหมาย',
+        available: true,
+        detail: [
+          `${copied.title || '-'}`,
+          `เวลา: ${formatBangkokDate(copied.startAt)}`,
+          `สถานที่: ${copied.locationName || '-'}`,
+          `ID: ${copied._id}`
+        ].join("\n"),
+        command: '/นัดหมาย',
+        actionLabel: 'ดูนัดหมาย'
+      }));
+    } catch (err) {
+      await line.reply(event.replyToken, `ยังคัดลอกนัดหมายไม่ได้ค่ะ: ${err.message}`);
+    }
+    return true;
+  }
+
   const pendingMode = getPendingMode(userId);
   if (pendingMode && ['image_prompt', 'image_review'].includes(pendingMode.type)) {
+    if (userId) {
+      pendingModes.delete(userId);
+    }
+    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
+    return true;
+  }
+
+  if (pendingMode && ['disabled_image_prompt', 'disabled_image_review'].includes(pendingMode.type)) {
     const editPromptMatch = text.match(/^\/?แก้(?:ไข)?(?:พร้อมท์|prompt)\s+([\s\S]+)$/i);
 
     if (['สร้างเลย', 'สร้างภาพเลย', 'ตกลงสร้าง', 'ok'].includes(command)) {
@@ -2807,7 +2864,7 @@ async function handleTextMessage(event) {
   }
 
   if (['สร้างภาพ', 'วาดภาพ', 'ทำภาพ'].includes(text)) {
-    await line.replyMessage(event.replyToken, buildImagePromptMessage(userId));
+    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
     return true;
   }
 
@@ -2911,7 +2968,7 @@ async function handleTextMessage(event) {
 
   const speechMatch = text.match(/^(?:คำกล่าว|เขียนคำกล่าว)\s+(.+)$/);
   if (speechMatch) {
-    const draft = speech.createSpeechDraft(speechMatch[1]);
+    const draft = await speech.createSpeechDraft(speechMatch[1]);
     await line.reply(event.replyToken, draft);
     return true;
   }
@@ -2941,14 +2998,10 @@ async function handleTextMessage(event) {
 
   const imageMatch = text.match(/^\/?(?:สร้างภาพ|วาดภาพ|ทำภาพ)\s+([\s\S]+)$/i);
   if (imageMatch) {
-    const prompt = await buildImagePromptFromDescription(imageMatch[1]);
-    const imageMessage = await ai.generateImage(prompt.generationPrompt, {
-      size: '1024x1024'
-    });
     if (userId) {
       pendingModes.delete(userId);
     }
-    await line.replyMessage(event.replyToken, buildImageResultMessages(imageMessage, prompt));
+    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
     return true;
   }
 

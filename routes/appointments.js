@@ -28,10 +28,24 @@ router.get('/duplicates', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const appointment = await appointments.createAppointment(req.body);
-    res.status(201).json(appointment);
+    const repeat = req.body.repeat || req.body.recurrence;
+    const count = Number(req.body.count || req.body.times || 1);
+    const result = repeat || count > 1
+      ? await appointments.createRecurringAppointments(req.body)
+      : await appointments.createAppointment(req.body);
+    res.status(201).json(result);
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/:id/copy', async (req, res) => {
+  try {
+    const appointment = await appointments.copyAppointment(req.params.id, req.body);
+    res.status(201).json(appointment);
+  } catch (err) {
+    const status = err.message.includes('not found') ? 404 : 400;
+    res.status(status).json({ error: err.message });
   }
 });
 

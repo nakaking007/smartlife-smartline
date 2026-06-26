@@ -16,6 +16,7 @@ const { THAILAND_TIME_ZONE, formatBangkokDateTime, formatBangkokTime, getBangkok
 
 const LIVE_DISASTER_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 const MORNING_REPORT_JOB = 'morning-report';
+const BEDTIME_TODO_PROMPT_JOB = 'bedtime-todo-prompt';
 const MORNING_REPORT_CATCH_UP_END_HOUR = 12;
 let lastLiveDisasterSyncAt = 0;
 const morningReportInFlight = new Set();
@@ -92,12 +93,14 @@ async function sendMorningReport() {
         id: item._id,
         title: item.title || '-',
         dueAt: item.dueAt,
+        responsible: item.responsible,
         priority: item.priority || 'normal'
       })),
       overdue: overdueTodos.map(item => ({
         id: item._id,
         title: item.title || '-',
         dueAt: item.dueAt,
+        responsible: item.responsible,
         priority: item.priority || 'normal'
       }))
     };
@@ -126,6 +129,30 @@ async function sendMorningReport() {
     return true;
   } catch (err) {
     console.error("SmartLife cron error:", err);
+    return false;
+  }
+}
+
+async function sendBedtimeTodoPrompt(baseDate = new Date()) {
+  try {
+    const dateKey = getBangkokDateKey(baseDate);
+
+    if (await hasCronRunSent(BEDTIME_TODO_PROMPT_JOB, dateKey)) {
+      return false;
+    }
+
+    await line.pushMessage([
+      'เรียน นายท่าน ก่อนพักผ่อนคืนนี้ จะลงบันทึก To-do สำหรับพรุ่งนี้หรือสัปดาห์นี้ไหมคะ',
+      '',
+      'พิมพ์ตัวอย่าง:',
+      'เพิ่มงาน | ชื่องาน | 28-06-2569 : 17.00 น. | ผู้รับผิดชอบ | high | หมายเหตุ',
+      '',
+      'ดูงาน: งานวันนี้ / งานสัปดาห์นี้ / งานค้าง'
+    ].join('\n'));
+    await markCronRunSent(BEDTIME_TODO_PROMPT_JOB, dateKey);
+    return true;
+  } catch (err) {
+    console.error("SmartLife bedtime todo prompt error:", err.message);
     return false;
   }
 }
@@ -186,12 +213,16 @@ function getCronRunCollection() {
 }
 
 async function hasMorningReportSent(dateKey) {
+  return hasCronRunSent(MORNING_REPORT_JOB, dateKey);
+}
+
+async function hasCronRunSent(job, dateKey) {
   if (mongoose.connection.readyState !== 1) {
     return false;
   }
 
   const existing = await getCronRunCollection().findOne({
-    job: MORNING_REPORT_JOB,
+    job,
     dateKey,
     status: 'success'
   });
@@ -200,16 +231,20 @@ async function hasMorningReportSent(dateKey) {
 }
 
 async function markMorningReportSent(dateKey) {
+  return markCronRunSent(MORNING_REPORT_JOB, dateKey);
+}
+
+async function markCronRunSent(job, dateKey) {
   if (mongoose.connection.readyState !== 1) {
     return;
   }
 
   const now = new Date();
   await getCronRunCollection().updateOne(
-    { job: MORNING_REPORT_JOB, dateKey },
+    { job, dateKey },
     {
       $set: {
-        job: MORNING_REPORT_JOB,
+        job,
         dateKey,
         status: 'success',
         sentAt: now,
@@ -331,6 +366,44 @@ async function sendDueAppointmentReminders() {
   }
 }
 
+async function sendDueTodoReminders() {
+  try {
+    const reminderItems = await todos.findDueTodoReminders();
+
+    for (const todo of reminderItems) {
+      await line.pushMessage([
+        'เรียน นายท่าน ใกล้ถึงเวลากำหนดเสร็จงานค่ะ',
+        '',
+        `งาน: ${todo.title || '-'}`,
+        `กำหนดเสร็จ: ${todo.dueAt ? formatBangkokDateTime(todo.dueAt) : '-'}`,
+        todo.responsible ? `ผู้รับผิดชอบ: ${todo.responsible}` : null,
+        '',
+        'ถ้าเสร็จแล้วพิมพ์ งานเสร็จ <ID> ค่ะ',
+        `ID: ${todo._id}`
+      ].filter(Boolean).join('\n'));
+      await todos.markTodoReminderSent(todo);
+    }
+
+    const dueItems = await todos.findDueTodoPrompts();
+
+    for (const todo of dueItems) {
+      await line.pushMessage([
+        'เรียน นายท่าน ถึงเวลากำหนดส่งงานแล้วค่ะ',
+        '',
+        `งาน: ${todo.title || '-'}`,
+        `กำหนดเสร็จ: ${todo.dueAt ? formatBangkokDateTime(todo.dueAt) : '-'}`,
+        todo.responsible ? `ผู้รับผิดชอบ: ${todo.responsible}` : null,
+        '',
+        'งานนี้ส่งรายงานเสร็จหรือยังคะ ถ้าเสร็จแล้วพิมพ์ งานเสร็จ <ID> ค่ะ',
+        `ID: ${todo._id}`
+      ].filter(Boolean).join('\n'));
+      await todos.markTodoDuePromptSent(todo);
+    }
+  } catch (err) {
+    console.error("SmartLife todo reminder error:", err.message);
+  }
+}
+
 async function sendUrgentAlerts() {
   try {
     if (!config.lineUserId) {
@@ -392,10 +465,15 @@ cron.schedule('0 6 * * *', () => sendDailyMorningReport(), {
   timezone: THAILAND_TIME_ZONE
 });
 
+cron.schedule('30 21 * * *', () => sendBedtimeTodoPrompt(), {
+  timezone: THAILAND_TIME_ZONE
+});
+
 cron.schedule('* * * * *', async () => {
   await sendMissedMorningReportIfNeeded();
   await syncLiveDisasterAlerts();
   await sendDueAppointmentReminders();
+  await sendDueTodoReminders();
   await sendUrgentAlerts();
 }, {
   timezone: THAILAND_TIME_ZONE
@@ -420,8 +498,10 @@ module.exports = {
   sendMorningReport,
   sendDailyMorningReport,
   sendMissedMorningReportIfNeeded,
+  sendBedtimeTodoPrompt,
   sendMorningActiveAlerts,
   sendDueAppointmentReminders,
+  sendDueTodoReminders,
   sendUrgentAlerts,
   syncLiveDisasterAlerts
 };

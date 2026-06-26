@@ -28,6 +28,15 @@ router.get('/today', async (req, res) => {
   }
 });
 
+router.get('/week', async (req, res) => {
+  try {
+    const items = await todos.getThisWeek();
+    res.json(items);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/', async (req, res) => {
   try {
     const todo = await todos.createTodo(req.body);

@@ -5,9 +5,14 @@ const todoSchema = new mongoose.Schema({
   lineUserId: String,
   title: String,
   dueAt: Date,
+  responsible: String,
   priority: String,
   category: String,
   notes: String,
+  reminderMinutesBefore: Number,
+  remindAt: Date,
+  reminderSentAt: Date,
+  duePromptSentAt: Date,
   status: String,
   completedAt: Date
 }, {

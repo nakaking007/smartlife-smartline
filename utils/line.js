@@ -206,21 +206,24 @@ function buildTodoMorningText(todoSummary = {}) {
 
   if (!overdue.length && !today.length) {
     lines.push('- ไม่มีงานค้างหรืองานที่ครบกำหนดวันนี้ค่ะ');
+    lines.push('- นายท่านจะลงบันทึก To-do ตอนนี้ไหมคะ พิมพ์: เพิ่มงาน | ชื่องาน | วันเวลา | ผู้รับผิดชอบ | high | หมายเหตุ');
     return lines.join('\n');
   }
 
   overdue.slice(0, 5).forEach(item => {
-    lines.push(`- ค้าง: ${item.title || '-'} (${priorityLabel[item.priority] || item.priority || 'ปกติ'})`);
+    lines.push(`- ค้าง: ${item.title || '-'}${item.responsible ? ` / ผู้รับผิดชอบ: ${item.responsible}` : ''} (${priorityLabel[item.priority] || item.priority || 'ปกติ'})`);
   });
 
   today.slice(0, 5).forEach(item => {
-    lines.push(`- วันนี้: ${item.title || '-'} (${priorityLabel[item.priority] || item.priority || 'ปกติ'})`);
+    lines.push(`- วันนี้: ${item.title || '-'}${item.responsible ? ` / ผู้รับผิดชอบ: ${item.responsible}` : ''} (${priorityLabel[item.priority] || item.priority || 'ปกติ'})`);
   });
 
   const hiddenCount = Math.max(0, overdue.length + today.length - 10);
   if (hiddenCount > 0) {
     lines.push(`- ยังมีอีก ${hiddenCount} งาน เปิด /ปฏิทิน เพื่อดูทั้งหมด`);
   }
+
+  lines.push('- นายท่านจะลงบันทึกเพิ่มหรืออัปเดตงานตอนนี้ไหมคะ');
 
   return lines.join('\n');
 }

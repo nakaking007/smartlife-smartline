@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const Todo = require('../models/Todo');
-const { getBangkokDayRange, parseBangkokDate } = require('./time');
+const { getBangkokDayRange, getBangkokWeekRange, parseBangkokDate } = require('./time');
+
+const DEFAULT_REMINDER_MINUTES = 60;
 
 const EDITABLE_FIELDS = [
   'title',
@@ -8,6 +10,8 @@ const EDITABLE_FIELDS = [
   'priority',
   'category',
   'notes',
+  'responsible',
+  'reminderMinutesBefore',
   'status',
   'lineUserId'
 ];
@@ -57,9 +61,15 @@ async function createTodo(changes = {}) {
     ...changes,
     title,
     dueAt: changes.dueAt ? parseBangkokDate(changes.dueAt) : undefined,
+    responsible: changes.responsible || '',
     priority: changes.priority || 'normal',
+    reminderMinutesBefore: Number(changes.reminderMinutesBefore || DEFAULT_REMINDER_MINUTES),
     status: normalizeStatus(changes.status || 'open')
   });
+
+  if (todo.dueAt) {
+    todo.remindAt = new Date(todo.dueAt.getTime() - todo.reminderMinutesBefore * 60 * 1000);
+  }
 
   if (todo.status === 'done' && !todo.completedAt) {
     todo.completedAt = new Date();
@@ -97,6 +107,15 @@ async function updateTodo(id, changes = {}) {
     todo.completedAt = todo.status === 'done' ? (todo.completedAt || new Date()) : undefined;
   }
 
+  if (changes.dueAt !== undefined || changes.reminderMinutesBefore !== undefined) {
+    todo.reminderMinutesBefore = Number(todo.reminderMinutesBefore || DEFAULT_REMINDER_MINUTES);
+    todo.remindAt = todo.dueAt
+      ? new Date(todo.dueAt.getTime() - todo.reminderMinutesBefore * 60 * 1000)
+      : undefined;
+    todo.reminderSentAt = undefined;
+    todo.duePromptSentAt = undefined;
+  }
+
   return todo.save();
 }
 
@@ -131,6 +150,43 @@ async function getOverdue(baseDate = new Date()) {
   });
 }
 
+async function getThisWeek(baseDate = new Date()) {
+  const { start, end } = getBangkokWeekRange(baseDate);
+  return listTodos({
+    activeOnly: true,
+    dueAtFrom: start,
+    dueAtTo: end,
+    limit: 100
+  });
+}
+
+async function findDueTodoReminders(now = new Date()) {
+  return Todo.find({
+    status: 'open',
+    dueAt: { $gte: now },
+    remindAt: { $lte: now },
+    reminderSentAt: { $exists: false }
+  }).sort({ dueAt: 1 }).limit(50);
+}
+
+async function findDueTodoPrompts(now = new Date()) {
+  return Todo.find({
+    status: 'open',
+    dueAt: { $lte: now },
+    duePromptSentAt: { $exists: false }
+  }).sort({ dueAt: 1 }).limit(50);
+}
+
+async function markTodoReminderSent(todo, sentAt = new Date()) {
+  todo.reminderSentAt = sentAt;
+  return todo.save();
+}
+
+async function markTodoDuePromptSent(todo, sentAt = new Date()) {
+  todo.duePromptSentAt = sentAt;
+  return todo.save();
+}
+
 function parseCreateText(text) {
   const trimmed = String(text || '').trim();
   const match = trimmed.match(/^\/?(?:เพิ่มงาน|บันทึกงาน|todo|to do)\s*\|\s*([\s\S]+)$/i);
@@ -143,11 +199,25 @@ function parseCreateText(text) {
     return null;
   }
 
+  const priorities = ['urgent', 'high', 'normal', 'low'];
+  const oldFormat = priorities.includes(String(parts[2] || '').toLowerCase());
+
+  if (oldFormat) {
+    return {
+      title: parts[0],
+      dueAt: parts[1] || undefined,
+      priority: parts[2] || 'normal',
+      notes: parts[3] || ''
+    };
+  }
+
   return {
     title: parts[0],
     dueAt: parts[1] || undefined,
-    priority: parts[2] || 'normal',
-    notes: parts[3] || ''
+    responsible: parts[2] || '',
+    priority: parts[3] || 'normal',
+    notes: parts[4] || '',
+    reminderMinutesBefore: parts[5] ? Number(parts[5]) : DEFAULT_REMINDER_MINUTES
   };
 }
 
@@ -161,6 +231,11 @@ module.exports = {
   deleteTodo,
   getToday,
   getOverdue,
+  getThisWeek,
+  findDueTodoReminders,
+  findDueTodoPrompts,
+  markTodoReminderSent,
+  markTodoDuePromptSent,
   parseCreateText,
   normalizeStatus
 };
