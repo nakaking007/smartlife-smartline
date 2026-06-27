@@ -355,7 +355,10 @@ async function sendDueAppointmentReminders() {
           {
             leadTime: formatReminderLead(reminder.minutesBefore),
             locationName: item.appointment.locationName,
-            dressCode: item.appointment.dressCode
+            dressCode: item.appointment.dressCode,
+            contactName: item.appointment.contactName,
+            contactPhone: item.appointment.contactPhone,
+            contactLineId: item.appointment.contactLineId
           }
         );
         await appointments.markReminderSent(item.appointment, reminder.minutesBefore);

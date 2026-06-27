@@ -148,7 +148,9 @@ async function createAppointment(changes = {}) {
   const repeat = normalizeRepeat(changes.repeat || changes.recurrence);
   const appointmentType = normalizeAppointmentType(changes.appointmentType || changes.type, repeat);
   const startAt = parseBangkokDate(changes.startAt);
-  const endAt = appointmentType === 'multi_day' ? parseBangkokDate(changes.endAt) : null;
+  const endAt = ['multi_day', 'recurring'].includes(appointmentType) && changes.endAt
+    ? parseBangkokDate(changes.endAt)
+    : null;
   const appointment = new Appointment({
     ...changes,
     title: changes.title || changes.summary || 'นัดหมาย',
@@ -191,6 +193,9 @@ function normalizeRepeat(value) {
   if (['daily', 'day', 'ทุกวัน'].includes(text)) return 'daily';
   if (['weekly', 'week', 'ทุกสัปดาห์', 'ทุกอาทิตย์'].includes(text)) return 'weekly';
   if (['monthly', 'month', 'ทุกเดือน'].includes(text)) return 'monthly';
+  if (['monthly_first_weekend', 'first_weekend', 'เสาร์อาทิตย์แรกของเดือน'].includes(text)) {
+    return 'monthly_first_weekend';
+  }
   return '';
 }
 
@@ -212,6 +217,17 @@ function addMonthsBangkok(date, months) {
   return parseBangkokDate(`${targetYear}-${targetMonth}-${targetDay} ${timePart.replace(':', '.')}`);
 }
 
+function getFirstSaturdayBangkok(date, months) {
+  const [datePart, timePart] = getBangkokMinuteKey(date).split(' ');
+  const [year, month] = datePart.split('-').map(Number);
+  const targetMonthIndex = month - 1 + months;
+  const targetYear = year + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12 + 1;
+  const firstDayOfWeek = new Date(Date.UTC(targetYear, targetMonth - 1, 1)).getUTCDay();
+  const firstSaturday = 1 + ((6 - firstDayOfWeek + 7) % 7);
+  return parseBangkokDate(`${targetYear}-${targetMonth}-${firstSaturday} ${timePart.replace(':', '.')}`);
+}
+
 async function createRecurringAppointments(changes = {}) {
   const repeat = normalizeRepeat(changes.repeat || changes.recurrence);
   const count = Math.min(Math.max(Number(changes.count || changes.times || 1), 1), MAX_RECURRING_APPOINTMENTS);
@@ -225,17 +241,33 @@ async function createRecurringAppointments(changes = {}) {
     throw new Error('Appointment startAt is required');
   }
 
+  const firstEndAt = changes.endAt ? parseBangkokDate(changes.endAt) : null;
+  if (firstEndAt && firstEndAt <= firstStartAt) {
+    throw new Error('Appointment endAt must be after startAt');
+  }
+  const durationMs = firstEndAt ? firstEndAt.getTime() - firstStartAt.getTime() : 0;
+  const occurrenceDetails = Array.isArray(changes.occurrenceDetails)
+    ? changes.occurrenceDetails
+    : String(changes.occurrenceDetails || '').split(/\r?\n/).map(item => item.trim()).filter(Boolean);
   const items = [];
   const recurrenceGroupId = new mongoose.Types.ObjectId().toString();
   for (let index = 0; index < count; index += 1) {
     const occurrenceStartAt = repeat === 'monthly'
       ? addMonthsBangkok(firstStartAt, index)
-      : addDays(firstStartAt, repeat === 'weekly' ? index * 7 : index);
+      : repeat === 'monthly_first_weekend'
+        ? getFirstSaturdayBangkok(firstStartAt, index)
+        : addDays(firstStartAt, repeat === 'weekly' ? index * 7 : index);
+    const occurrenceDetail = occurrenceDetails[index] || '';
     items.push(await createAppointment({
       ...changes,
       appointmentType: 'recurring',
       startAt: occurrenceStartAt,
-      endAt: null,
+      endAt: durationMs ? new Date(occurrenceStartAt.getTime() + durationMs) : null,
+      preparation: occurrenceDetail
+        ? [changes.preparation, `เรื่อง: ${occurrenceDetail}`].filter(Boolean).join('\n')
+        : changes.preparation,
+      occurrenceNumber: index + 1,
+      occurrenceDetail,
       repeat,
       repeatIndex: index + 1,
       repeatCount: count,
@@ -354,9 +386,14 @@ async function updateAppointment(id, changes) {
     appointment.appointmentType,
     appointment.repeat
   );
-  if (appointment.appointmentType !== 'multi_day') {
+  if (!['multi_day', 'recurring'].includes(appointment.appointmentType)) {
     appointment.endAt = null;
-  } else if (!appointment.endAt || appointment.endAt <= appointment.startAt) {
+  } else if (
+    appointment.appointmentType === 'multi_day' &&
+    (!appointment.endAt || appointment.endAt <= appointment.startAt)
+  ) {
+    throw new Error('Appointment endAt must be after startAt');
+  } else if (appointment.endAt && appointment.endAt <= appointment.startAt) {
     throw new Error('Appointment endAt must be after startAt');
   }
 

@@ -202,6 +202,22 @@ async function testAppointmentTypes() {
       ['2026-01-31', '2026-02-28', '2026-03-31']
     );
     assert(monthly.every(item => item.appointmentType === 'recurring'));
+
+    const firstWeekends = await appointments.createRecurringAppointments({
+      title: 'สัมมนา',
+      startAt: '2026-06-01 09.00 น.',
+      endAt: '2026-06-02 16.00 น.',
+      repeat: 'monthly_first_weekend',
+      count: 2
+    });
+    assert.deepStrictEqual(
+      firstWeekends.map(item => time.getBangkokDateKey(item.startAt)),
+      ['2026-06-06', '2026-07-04']
+    );
+    assert.deepStrictEqual(
+      firstWeekends.map(item => time.getBangkokDateKey(item.endAt)),
+      ['2026-06-07', '2026-07-05']
+    );
   } finally {
     Appointment.find = originalFind;
     Appointment.prototype.save = originalSave;

@@ -751,10 +751,25 @@ function renderLiffCalendarPage() {
             <option value="daily">ทุกวัน</option>
             <option value="weekly">ทุกสัปดาห์</option>
             <option value="monthly">ทุกเดือน</option>
+            <option value="monthly_first_weekend">เสาร์-อาทิตย์แรกของเดือน</option>
           </select>
         </label>
         <label>จำนวนครั้ง
           <input id="repeatCountInput" name="count" type="number" min="2" max="60" value="2">
+        </label>
+      </div>
+      <label id="occurrenceDetailsField" class="hidden">เรื่อง/รายละเอียดแต่ละครั้ง (บรรทัดละ 1 ครั้ง)
+        <textarea id="occurrenceDetailsInput" name="occurrenceDetails" rows="3" placeholder="ครั้งที่ 1: Greetings&#10;ครั้งที่ 2: Introductions"></textarea>
+      </label>
+      <div class="grid">
+        <label>ผู้ประสานงาน
+          <input name="contactName" placeholder="ชื่อผู้ประสานงาน">
+        </label>
+        <label>เบอร์โทรศัพท์
+          <input name="contactPhone" type="tel" placeholder="เช่น 0812345678">
+        </label>
+        <label>LINE ID
+          <input name="contactLineId" placeholder="LINE ID ผู้ประสานงาน">
         </label>
       </div>
       <label>รายละเอียด/เตรียมตัว
@@ -810,6 +825,8 @@ function renderLiffCalendarPage() {
     const recurringFields = document.getElementById('recurringFields');
     const repeatSelect = document.getElementById('repeatSelect');
     const repeatCountInput = document.getElementById('repeatCountInput');
+    const occurrenceDetailsField = document.getElementById('occurrenceDetailsField');
+    const occurrenceDetailsInput = document.getElementById('occurrenceDetailsInput');
 
     function setStatus(text) { statusText.textContent = text || ''; }
     function setTodoStatus(text) { todoStatusText.textContent = text || ''; }
@@ -836,6 +853,22 @@ function renderLiffCalendarPage() {
         numberingSystem: 'latn'
       }).format(date).replace(/(\\d{1,2}):(\\d{2})$/, '$1.$2 น.');
     }
+    function toBangkokInputValue(value) {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        hourCycle: 'h23'
+      }).formatToParts(new Date(value)).reduce((result, part) => {
+        if (part.type !== 'literal') result[part.type] = part.value;
+        return result;
+      }, {});
+      return parts.year + '-' + parts.month + '-' + parts.day + 'T' + parts.hour + ':' + parts.minute;
+    }
     function bangkokDateKey(value) {
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return '';
@@ -852,14 +885,19 @@ function renderLiffCalendarPage() {
       const isMultiDay = type === 'multi_day';
       const isRecurring = type === 'recurring';
       startAtLabel.textContent = isMultiDay ? 'วันและเวลาเริ่มต้น' : 'วันและเวลา';
-      endAtField.classList.toggle('hidden', !isMultiDay);
+      endAtField.firstChild.textContent = isRecurring
+        ? 'วันและเวลาสิ้นสุดของครั้งแรก (เว้นว่างได้)'
+        : 'วันและเวลาสิ้นสุด';
+      endAtField.classList.toggle('hidden', !isMultiDay && !isRecurring);
       recurringFields.classList.toggle('hidden', !isRecurring);
+      occurrenceDetailsField.classList.toggle('hidden', !isRecurring);
       endAtInput.required = isMultiDay;
-      endAtInput.disabled = !isMultiDay;
+      endAtInput.disabled = !isMultiDay && !isRecurring;
       repeatSelect.required = isRecurring;
       repeatSelect.disabled = !isRecurring;
       repeatCountInput.required = isRecurring;
       repeatCountInput.disabled = !isRecurring;
+      occurrenceDetailsInput.disabled = !isRecurring;
       if (!isMultiDay) endAtInput.value = '';
     }
     function syncActiveButtons() {
@@ -903,9 +941,9 @@ function renderLiffCalendarPage() {
         '<div class="itemHead"><div class="title">' + escapeHtml(item.title || '-') + '</div><div class="time">' +
           escapeHtml(item.endAt ? formatBangkok(item.startAt) + ' - ' + formatBangkok(item.endAt) : formatBangkok(item.startAt)) +
         '</div></div>' +
-        '<div class="meta">' + escapeHtml(item.appointmentType === 'multi_day' ? 'หลายวัน' : item.appointmentType === 'recurring' ? 'ประจำ ' + ({ daily: 'ทุกวัน', weekly: 'ทุกสัปดาห์', monthly: 'ทุกเดือน' }[item.repeat] || '') : 'วันเดียว') + '</div>' +
-        '<div class="meta">' + escapeHtml([item.locationName, item.preparation || item.dressCode].filter(Boolean).join(' | ') || '-') + '</div>' +
-        '<div class="seg"><button type="button" data-appointment-delete="' + escapeHtml(item._id) + '" class="danger">ลบ</button></div>' +
+        '<div class="meta">' + escapeHtml(item.appointmentType === 'multi_day' ? 'หลายวัน' : item.appointmentType === 'recurring' ? 'ครั้งที่ ' + (item.repeatIndex || item.occurrenceNumber || '-') + '/' + (item.repeatCount || '-') + ' · ' + ({ daily: 'ทุกวัน', weekly: 'ทุกสัปดาห์', monthly: 'ทุกเดือน', monthly_first_weekend: 'เสาร์-อาทิตย์แรกของเดือน' }[item.repeat] || 'ประจำ') : 'วันเดียว') + '</div>' +
+        '<div class="meta">' + escapeHtml([item.locationName ? 'สถานที่: ' + item.locationName : '', item.preparation ? 'เรื่อง/รายละเอียด: ' + item.preparation : '', item.contactName ? 'ผู้ประสานงาน: ' + item.contactName : '', item.contactPhone ? 'โทร: ' + item.contactPhone : '', item.contactLineId ? 'LINE: ' + item.contactLineId : ''].filter(Boolean).join(' | ') || '-') + '</div>' +
+        '<div class="seg"><button type="button" data-appointment-edit="' + escapeHtml(item._id) + '">แก้ไขครั้งนี้</button><button type="button" data-appointment-delete="' + escapeHtml(item._id) + '" class="danger">ลบ</button></div>' +
       '</article>').join('');
     }
     function renderTodos() {
@@ -1026,6 +1064,32 @@ function renderLiffCalendarPage() {
       setTodoStatus('เพิ่ม To-do แล้ว');
     });
     appointmentList.addEventListener('click', async event => {
+      const editButton = event.target.closest('[data-appointment-edit]');
+      if (editButton) {
+        const item = state.appointments.find(row => row._id === editButton.dataset.appointmentEdit);
+        if (!item) return;
+        const startAt = prompt('วันที่และเวลา เช่น 2026-07-03T09:00', toBangkokInputValue(item.startAt));
+        if (startAt === null) return;
+        const locationName = prompt('สถานที่', item.locationName || '');
+        if (locationName === null) return;
+        const preparation = prompt('เรื่อง/รายละเอียดครั้งนี้', item.preparation || '');
+        if (preparation === null) return;
+        const contactName = prompt('ผู้ประสานงาน', item.contactName || '');
+        if (contactName === null) return;
+        const contactPhone = prompt('เบอร์โทรศัพท์', item.contactPhone || '');
+        if (contactPhone === null) return;
+        const contactLineId = prompt('LINE ID', item.contactLineId || '');
+        if (contactLineId === null) return;
+        const editRes = await fetch('/appointments/' + encodeURIComponent(item._id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ startAt, locationName, preparation, contactName, contactPhone, contactLineId })
+        });
+        if (!editRes.ok) { setStatus('แก้ไขไม่สำเร็จ'); return; }
+        await loadAll();
+        setStatus('แก้ไขนัดหมายครั้งนี้แล้ว');
+        return;
+      }
       const button = event.target.closest('[data-appointment-delete]');
       if (!button || !confirm('ลบรายการนี้หรือไม่?')) return;
       const res = await fetch('/appointments/' + encodeURIComponent(button.dataset.appointmentDelete), { method: 'DELETE' });

@@ -89,6 +89,18 @@ async function sendAppointmentReminder(eventId, summary, time, details = {}) {
     bodyContents.push({ type: "text", text: `👔 การแต่งกาย: ${details.dressCode}`, size: "sm", color: "#555555", wrap: true });
   }
 
+  if (details.contactName) {
+    bodyContents.push({ type: "text", text: `ผู้ประสานงาน: ${details.contactName}`, size: "sm", color: "#555555", wrap: true });
+  }
+
+  if (details.contactPhone) {
+    bodyContents.push({ type: "text", text: `โทร: ${details.contactPhone}`, size: "sm", color: "#555555", wrap: true });
+  }
+
+  if (details.contactLineId) {
+    bodyContents.push({ type: "text", text: `LINE: ${details.contactLineId}`, size: "sm", color: "#555555", wrap: true });
+  }
+
   return pushMessage({
     type: "flex",
     altText: "แจ้งเตือนนัดหมาย",
