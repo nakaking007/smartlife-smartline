@@ -11,7 +11,17 @@ const appointmentSchema = new mongoose.Schema({
   user: mongoose.Schema.Types.Mixed,
   title: String,
   activityType: String,
+  appointmentType: {
+    type: String,
+    enum: ['single', 'multi_day', 'recurring'],
+    default: 'single'
+  },
   startAt: Date,
+  endAt: Date,
+  repeat: String,
+  repeatIndex: Number,
+  repeatCount: Number,
+  recurrenceGroupId: String,
   reminderMinutesBefore: Number,
   remindAt: Date,
   reminders: [reminderSchema],
