@@ -8,7 +8,9 @@ const MAX_RECURRING_APPOINTMENTS = 60;
 
 const EDITABLE_FIELDS = [
   'title',
+  'appointmentType',
   'startAt',
+  'endAt',
   'locationName',
   'contactName',
   'contactPhone',
@@ -124,12 +126,18 @@ async function listAppointments(filters = {}) {
   }
 
   if (filters.startAtFrom || filters.startAtTo) {
-    query.startAt = {};
-    if (filters.startAtFrom) {
-      query.startAt.$gte = filters.startAtFrom;
-    }
+    query.$and = [];
     if (filters.startAtTo) {
-      query.startAt.$lte = filters.startAtTo;
+      query.$and.push({ startAt: { $lte: filters.startAtTo } });
+    }
+    if (filters.startAtFrom) {
+      query.$and.push({
+        $or: [
+          { endAt: { $gte: filters.startAtFrom } },
+          { endAt: null, startAt: { $gte: filters.startAtFrom } },
+          { endAt: { $exists: false }, startAt: { $gte: filters.startAtFrom } }
+        ]
+      });
     }
   }
 
@@ -137,15 +145,30 @@ async function listAppointments(filters = {}) {
 }
 
 async function createAppointment(changes = {}) {
+  const repeat = normalizeRepeat(changes.repeat || changes.recurrence);
+  const appointmentType = normalizeAppointmentType(changes.appointmentType || changes.type, repeat);
+  const startAt = parseBangkokDate(changes.startAt);
+  const endAt = appointmentType === 'multi_day' ? parseBangkokDate(changes.endAt) : null;
   const appointment = new Appointment({
     ...changes,
     title: changes.title || changes.summary || 'นัดหมาย',
-    startAt: parseBangkokDate(changes.startAt),
+    appointmentType,
+    startAt,
+    endAt,
+    repeat: repeat || undefined,
     status: changes.status || 'scheduled'
   });
 
   if (!appointment.startAt) {
     throw new Error('Appointment startAt is required');
+  }
+
+  if (appointmentType === 'multi_day' && !endAt) {
+    throw new Error('Appointment endAt is required for multi-day appointments');
+  }
+
+  if (endAt && endAt <= startAt) {
+    throw new Error('Appointment endAt must be after startAt');
   }
 
   if (appointment.locationName) {
@@ -167,7 +190,26 @@ function normalizeRepeat(value) {
   const text = String(value || '').trim().toLowerCase();
   if (['daily', 'day', 'ทุกวัน'].includes(text)) return 'daily';
   if (['weekly', 'week', 'ทุกสัปดาห์', 'ทุกอาทิตย์'].includes(text)) return 'weekly';
+  if (['monthly', 'month', 'ทุกเดือน'].includes(text)) return 'monthly';
   return '';
+}
+
+function normalizeAppointmentType(value, repeat) {
+  const text = String(value || '').trim().toLowerCase();
+  if (repeat || ['recurring', 'repeat', 'ประจำ'].includes(text)) return 'recurring';
+  if (['multi_day', 'multi-day', 'multiple', 'หลายวัน'].includes(text)) return 'multi_day';
+  return 'single';
+}
+
+function addMonthsBangkok(date, months) {
+  const [datePart, timePart] = getBangkokMinuteKey(date).split(' ');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const targetMonthIndex = month - 1 + months;
+  const targetYear = year + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12 + 1;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+  const targetDay = Math.min(day, lastDay);
+  return parseBangkokDate(`${targetYear}-${targetMonth}-${targetDay} ${timePart.replace(':', '.')}`);
 }
 
 async function createRecurringAppointments(changes = {}) {
@@ -184,14 +226,20 @@ async function createRecurringAppointments(changes = {}) {
   }
 
   const items = [];
+  const recurrenceGroupId = new mongoose.Types.ObjectId().toString();
   for (let index = 0; index < count; index += 1) {
-    const daysToAdd = repeat === 'weekly' ? index * 7 : index;
+    const occurrenceStartAt = repeat === 'monthly'
+      ? addMonthsBangkok(firstStartAt, index)
+      : addDays(firstStartAt, repeat === 'weekly' ? index * 7 : index);
     items.push(await createAppointment({
       ...changes,
-      startAt: addDays(firstStartAt, daysToAdd),
+      appointmentType: 'recurring',
+      startAt: occurrenceStartAt,
+      endAt: null,
       repeat,
       repeatIndex: index + 1,
-      repeatCount: count
+      repeatCount: count,
+      recurrenceGroupId
     }));
   }
 
@@ -230,7 +278,12 @@ async function getToday(baseDate = new Date()) {
   const { start, end } = getBangkokDayRange(baseDate);
 
   return Appointment.find({
-    startAt: { $gte: start, $lte: end },
+    startAt: { $lte: end },
+    $or: [
+      { endAt: { $gte: start } },
+      { endAt: null },
+      { endAt: { $exists: false } }
+    ],
     status: { $ne: 'deleted' }
   }).sort({ startAt: 1 });
 }
@@ -291,8 +344,20 @@ async function updateAppointment(id, changes) {
 
   for (const field of EDITABLE_FIELDS) {
     if (changes[field] !== undefined) {
-      appointment[field] = field === 'startAt' ? parseBangkokDate(changes[field]) : changes[field];
+      appointment[field] = ['startAt', 'endAt'].includes(field)
+        ? parseBangkokDate(changes[field])
+        : changes[field];
     }
+  }
+
+  appointment.appointmentType = normalizeAppointmentType(
+    appointment.appointmentType,
+    appointment.repeat
+  );
+  if (appointment.appointmentType !== 'multi_day') {
+    appointment.endAt = null;
+  } else if (!appointment.endAt || appointment.endAt <= appointment.startAt) {
+    throw new Error('Appointment endAt must be after startAt');
   }
 
   if (changes.startTime !== undefined) {
@@ -395,8 +460,8 @@ function parseCreateText(text) {
   };
 
   const tail = parts.slice(5).join(' ');
-  const repeatMatch = tail.match(/(?:repeat|ซ้ำ)\s*=\s*(daily|weekly|ทุกวัน|ทุกสัปดาห์|ทุกอาทิตย์)/i) ||
-    tail.match(/\b(daily|weekly|ทุกวัน|ทุกสัปดาห์|ทุกอาทิตย์)\b/i);
+  const repeatMatch = tail.match(/(?:repeat|ซ้ำ)\s*=\s*(daily|weekly|monthly|ทุกวัน|ทุกสัปดาห์|ทุกอาทิตย์|ทุกเดือน)/i) ||
+    tail.match(/\b(daily|weekly|monthly|ทุกวัน|ทุกสัปดาห์|ทุกอาทิตย์|ทุกเดือน)\b/i);
   const countMatch = tail.match(/(?:count|times|ครั้ง)\s*=\s*(\d{1,2})/i) ||
     tail.match(/(\d{1,2})\s*(?:ครั้ง|รอบ)/i);
 

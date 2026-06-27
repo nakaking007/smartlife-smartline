@@ -175,6 +175,39 @@ async function testTimeOnlyEditUsesBangkokTime() {
   }
 }
 
+async function testAppointmentTypes() {
+  const originalFind = Appointment.find;
+  const originalSave = Appointment.prototype.save;
+  Appointment.find = () => ({ limit: async () => [] });
+  Appointment.prototype.save = async function saveForTest() { return this; };
+
+  try {
+    const multiDay = await appointments.createAppointment({
+      title: 'สัมมนา',
+      appointmentType: 'multi_day',
+      startAt: '2026-06-27 09.00 น.',
+      endAt: '2026-06-29 16.00 น.'
+    });
+    assert.strictEqual(multiDay.appointmentType, 'multi_day');
+    assert.strictEqual(time.getBangkokDateKey(multiDay.endAt), '2026-06-29');
+
+    const monthly = await appointments.createRecurringAppointments({
+      title: 'ประชุมประจำเดือน',
+      startAt: '2026-01-31 09.00 น.',
+      repeat: 'monthly',
+      count: 3
+    });
+    assert.deepStrictEqual(
+      monthly.map(item => time.getBangkokDateKey(item.startAt)),
+      ['2026-01-31', '2026-02-28', '2026-03-31']
+    );
+    assert(monthly.every(item => item.appointmentType === 'recurring'));
+  } finally {
+    Appointment.find = originalFind;
+    Appointment.prototype.save = originalSave;
+  }
+}
+
 function testAlertFormatting() {
   const earthquake = alerts.formatAlert({
     type: 'earthquake',
@@ -426,6 +459,7 @@ async function run() {
   await testReminderSelectionDoesNotSpam();
   await testDuplicateUpdateRejected();
   await testTimeOnlyEditUsesBangkokTime();
+  await testAppointmentTypes();
   testAlertFormatting();
   testRiskAssessment();
   testWeatherLocationNormalization();

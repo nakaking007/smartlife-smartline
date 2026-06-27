@@ -727,12 +727,34 @@ function renderLiffCalendarPage() {
       <label>หัวข้อ
         <input name="title" required placeholder="เช่น ประชุมทีม">
       </label>
+      <label>ประเภทนัดหมาย
+        <select id="appointmentTypeSelect" name="appointmentType">
+          <option value="single">วันเดียว</option>
+          <option value="multi_day">หลายวัน</option>
+          <option value="recurring">ประจำ</option>
+        </select>
+      </label>
       <div class="grid">
-        <label>วันเวลา
+        <label><span id="startAtLabel">วันและเวลา</span>
           <input name="startAt" type="datetime-local" required>
+        </label>
+        <label id="endAtField" class="hidden">วันและเวลาสิ้นสุด
+          <input id="endAtInput" name="endAt" type="datetime-local">
         </label>
         <label>สถานที่
           <input name="locationName" placeholder="เช่น ห้องประชุม / บ้าน / ออนไลน์">
+        </label>
+      </div>
+      <div id="recurringFields" class="grid hidden">
+        <label>ทำซ้ำ
+          <select id="repeatSelect" name="repeat">
+            <option value="daily">ทุกวัน</option>
+            <option value="weekly">ทุกสัปดาห์</option>
+            <option value="monthly">ทุกเดือน</option>
+          </select>
+        </label>
+        <label>จำนวนครั้ง
+          <input id="repeatCountInput" name="count" type="number" min="2" max="60" value="2">
         </label>
       </div>
       <label>รายละเอียด/เตรียมตัว
@@ -781,6 +803,13 @@ function renderLiffCalendarPage() {
     const notice = document.getElementById('liffNotice');
     const lineUserIdInput = document.getElementById('lineUserIdInput');
     const todoLineUserIdInput = document.getElementById('todoLineUserIdInput');
+    const appointmentTypeSelect = document.getElementById('appointmentTypeSelect');
+    const startAtLabel = document.getElementById('startAtLabel');
+    const endAtField = document.getElementById('endAtField');
+    const endAtInput = document.getElementById('endAtInput');
+    const recurringFields = document.getElementById('recurringFields');
+    const repeatSelect = document.getElementById('repeatSelect');
+    const repeatCountInput = document.getElementById('repeatCountInput');
 
     function setStatus(text) { statusText.textContent = text || ''; }
     function setTodoStatus(text) { todoStatusText.textContent = text || ''; }
@@ -818,6 +847,21 @@ function renderLiffCalendarPage() {
       }).format(date);
     }
     function todayKey() { return bangkokDateKey(new Date()); }
+    function syncAppointmentTypeFields() {
+      const type = appointmentTypeSelect.value;
+      const isMultiDay = type === 'multi_day';
+      const isRecurring = type === 'recurring';
+      startAtLabel.textContent = isMultiDay ? 'วันและเวลาเริ่มต้น' : 'วันและเวลา';
+      endAtField.classList.toggle('hidden', !isMultiDay);
+      recurringFields.classList.toggle('hidden', !isRecurring);
+      endAtInput.required = isMultiDay;
+      endAtInput.disabled = !isMultiDay;
+      repeatSelect.required = isRecurring;
+      repeatSelect.disabled = !isRecurring;
+      repeatCountInput.required = isRecurring;
+      repeatCountInput.disabled = !isRecurring;
+      if (!isMultiDay) endAtInput.value = '';
+    }
     function syncActiveButtons() {
       document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === state.view));
       document.querySelectorAll('[data-filter]').forEach(button => button.classList.toggle('active', button.dataset.filter === state.filter));
@@ -827,11 +871,14 @@ function renderLiffCalendarPage() {
       if (state.filter === 'all') return true;
       const itemDate = new Date(item.startAt);
       if (Number.isNaN(itemDate.getTime())) return false;
-      if (state.filter === 'today') return bangkokDateKey(item.startAt) === todayKey();
+      const startKey = bangkokDateKey(item.startAt);
+      const endKey = bangkokDateKey(item.endAt || item.startAt);
+      if (state.filter === 'today') return startKey <= todayKey() && endKey >= todayKey();
       if (state.filter === 'week') {
         const now = Date.now();
         const end = now + 7 * 24 * 60 * 60 * 1000;
-        return itemDate.getTime() >= now - 60 * 60 * 1000 && itemDate.getTime() <= end;
+        const itemEnd = new Date(item.endAt || item.startAt).getTime();
+        return itemEnd >= now - 60 * 60 * 1000 && itemDate.getTime() <= end;
       }
       return true;
     }
@@ -853,7 +900,10 @@ function renderLiffCalendarPage() {
         return;
       }
       appointmentList.innerHTML = rows.map(item => '<article class="item">' +
-        '<div class="itemHead"><div class="title">' + escapeHtml(item.title || '-') + '</div><div class="time">' + escapeHtml(formatBangkok(item.startAt)) + '</div></div>' +
+        '<div class="itemHead"><div class="title">' + escapeHtml(item.title || '-') + '</div><div class="time">' +
+          escapeHtml(item.endAt ? formatBangkok(item.startAt) + ' - ' + formatBangkok(item.endAt) : formatBangkok(item.startAt)) +
+        '</div></div>' +
+        '<div class="meta">' + escapeHtml(item.appointmentType === 'multi_day' ? 'หลายวัน' : item.appointmentType === 'recurring' ? 'ประจำ ' + ({ daily: 'ทุกวัน', weekly: 'ทุกสัปดาห์', monthly: 'ทุกเดือน' }[item.repeat] || '') : 'วันเดียว') + '</div>' +
         '<div class="meta">' + escapeHtml([item.locationName, item.preparation || item.dressCode].filter(Boolean).join(' | ') || '-') + '</div>' +
         '<div class="seg"><button type="button" data-appointment-delete="' + escapeHtml(item._id) + '" class="danger">ลบ</button></div>' +
       '</article>').join('');
@@ -941,6 +991,7 @@ function renderLiffCalendarPage() {
       setStatus(err.message);
       setTodoStatus(err.message);
     }));
+    appointmentTypeSelect.addEventListener('change', syncAppointmentTypeFields);
     appointmentForm.addEventListener('submit', async event => {
       event.preventDefault();
       setStatus('กำลังเพิ่ม...');
@@ -953,6 +1004,7 @@ function renderLiffCalendarPage() {
       const result = await res.json().catch(() => ({}));
       if (!res.ok) { setStatus(result.error || 'เพิ่มไม่สำเร็จ'); return; }
       event.currentTarget.reset();
+      syncAppointmentTypeFields();
       if (state.profile && state.profile.userId) lineUserIdInput.value = state.profile.userId;
       await loadAll();
       setStatus('เพิ่มนัดหมายแล้ว');
@@ -1006,6 +1058,7 @@ function renderLiffCalendarPage() {
       }
     });
     initLiff().catch(err => showNotice('LIFF error: ' + err.message));
+    syncAppointmentTypeFields();
     render();
     loadAll().catch(err => {
       setStatus(err.message);
@@ -1128,22 +1181,7 @@ function renderRegisterPanelPage() {
 }
 
 function renderAppointmentFormPage() {
-  return renderSimpleFormPage({
-    title: 'บันทึกนัดหมาย SmartLife',
-    subtitle: 'เวลาทั้งหมดบันทึกเป็นเวลาไทย Asia/Bangkok แบบ 24 ชั่วโมง',
-    formKind: 'แบบฟอร์มนัดหมายเท่านั้น',
-    formNote: 'ฟอร์มนี้ใช้บันทึกนัดหมายโดยตรง เวลา 15.00 น. จะบันทึกและแสดงเป็น 15.00 น. ตามเวลาไทย',
-    action: '/appointments',
-    submitLabel: 'บันทึกนัดหมาย',
-    successText: 'บันทึกนัดหมายเรียบร้อยแล้ว',
-    fields: [
-      { name: 'title', label: 'หัวข้อนัดหมาย', required: true },
-      { name: 'startAt', label: 'วันและเวลา', type: 'datetime-local', required: true },
-      { name: 'locationName', label: 'สถานที่' },
-      { name: 'dressCode', label: 'ชุด/การแต่งกาย' },
-      { name: 'preparation', label: 'สิ่งที่ต้องเตรียม', type: 'textarea' }
-    ]
-  });
+  return renderLiffCalendarPage();
 }
 
 function getAppointmentIdFromData(data) {
