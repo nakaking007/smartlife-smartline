@@ -249,7 +249,7 @@ async function createRecurringAppointments(changes = {}) {
   const occurrenceDetails = Array.isArray(changes.occurrenceDetails)
     ? changes.occurrenceDetails
     : String(changes.occurrenceDetails || '').split(/\r?\n/).map(item => item.trim()).filter(Boolean);
-  const items = [];
+  const payloads = [];
   const recurrenceGroupId = new mongoose.Types.ObjectId().toString();
   for (let index = 0; index < count; index += 1) {
     const occurrenceStartAt = repeat === 'monthly'
@@ -258,7 +258,7 @@ async function createRecurringAppointments(changes = {}) {
         ? getFirstSaturdayBangkok(firstStartAt, index)
         : addDays(firstStartAt, repeat === 'weekly' ? index * 7 : index);
     const occurrenceDetail = occurrenceDetails[index] || '';
-    items.push(await createAppointment({
+    payloads.push({
       ...changes,
       appointmentType: 'recurring',
       startAt: occurrenceStartAt,
@@ -272,7 +272,14 @@ async function createRecurringAppointments(changes = {}) {
       repeatIndex: index + 1,
       repeatCount: count,
       recurrenceGroupId
-    }));
+    });
+  }
+
+  const items = [];
+  const batchSize = 5;
+  for (let index = 0; index < payloads.length; index += batchSize) {
+    const batch = payloads.slice(index, index + batchSize);
+    items.push(...await Promise.all(batch.map(payload => createAppointment(payload))));
   }
 
   return items;

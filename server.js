@@ -1032,20 +1032,37 @@ function renderLiffCalendarPage() {
     appointmentTypeSelect.addEventListener('change', syncAppointmentTypeFields);
     appointmentForm.addEventListener('submit', async event => {
       event.preventDefault();
-      setStatus('กำลังเพิ่ม...');
-      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
-      const res = await fetch('/appointments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok) { setStatus(result.error || 'เพิ่มไม่สำเร็จ'); return; }
-      event.currentTarget.reset();
-      syncAppointmentTypeFields();
-      if (state.profile && state.profile.userId) lineUserIdInput.value = state.profile.userId;
-      await loadAll();
-      setStatus('เพิ่มนัดหมายแล้ว');
+      const form = event.currentTarget;
+      const submitButton = form.querySelector('button[type="submit"]');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      const expectedCount = payload.appointmentType === 'recurring' ? Number(payload.count || 1) : 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+      submitButton.disabled = true;
+      setStatus('กำลังบันทึก ' + expectedCount + ' รายการ กรุณารอสักครู่...');
+      try {
+        const res = await fetch('/appointments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(result.error || 'เพิ่มไม่สำเร็จ');
+        form.reset();
+        syncAppointmentTypeFields();
+        if (state.profile && state.profile.userId) lineUserIdInput.value = state.profile.userId;
+        await loadAll();
+        const savedCount = Array.isArray(result) ? result.length : 1;
+        setStatus('เพิ่มนัดหมายแล้ว ' + savedCount + ' รายการ');
+      } catch (err) {
+        setStatus(err.name === 'AbortError'
+          ? 'ใช้เวลานานเกิน 60 วินาที กรุณากดรีเฟรชเพื่อตรวจรายการก่อนเพิ่มใหม่'
+          : 'เพิ่มไม่สำเร็จ: ' + err.message);
+      } finally {
+        clearTimeout(timeout);
+        submitButton.disabled = false;
+      }
     });
     todoForm.addEventListener('submit', async event => {
       event.preventDefault();
