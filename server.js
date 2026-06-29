@@ -22,6 +22,7 @@ const knowledge = require('./utils/knowledge');
 const scamCheck = require('./utils/scamCheck');
 const todos = require('./utils/todos');
 const earthquakeWarnings = require('./utils/earthquakeWarnings');
+const lineRecipient = require('./utils/lineRecipient');
 const User = require('./models/User');
 const { THAILAND_TIME_ZONE, formatBangkokDateTime, getBangkokDateKey, getBangkokDayRange } = require('./utils/time');
 const { formatHours } = require('./utils/riskAssessment');
@@ -49,7 +50,11 @@ mongoose.connect(config.mongoUri, {
   serverSelectionTimeoutMS: 10000,
   connectTimeoutMS: 10000
 })
-  .then(() => console.log("SmartLife MongoDB connected..."))
+  .then(async () => {
+    console.log("SmartLife MongoDB connected...");
+    const recoveredUserId = await lineRecipient.recoverLineRecipient();
+    console.log(`SmartLife LINE push recipient ${recoveredUserId ? 'ready' : 'not configured'}...`);
+  })
   .catch(err => console.error("SmartLife MongoDB connection error:", err));
 
 app.get('/', (req, res) => {
@@ -3290,6 +3295,11 @@ async function handleLineWebhook(req, res) {
     event = req.body.events && req.body.events[0];
     if (!event) {
       return res.sendStatus(200);
+    }
+
+    const eventUserId = event.source && event.source.userId;
+    if (eventUserId) {
+      await lineRecipient.rememberLineRecipient(eventUserId);
     }
 
     if (event.type === 'message' && event.message && event.message.type === 'text') {
