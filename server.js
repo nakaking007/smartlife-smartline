@@ -80,6 +80,7 @@ app.get('/health', (req, res) => {
 
   res.json({
     status: mongoReadyState === 1 ? 'ok' : 'degraded',
+    release: process.env.RENDER_GIT_COMMIT ? process.env.RENDER_GIT_COMMIT.slice(0, 7) : 'local',
     timezone: THAILAND_TIME_ZONE,
     thailandTime: formatBangkokDateTime(new Date()),
     mongo: mongoStates[mongoReadyState] || 'unknown',
