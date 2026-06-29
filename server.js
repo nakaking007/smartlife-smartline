@@ -78,6 +78,11 @@ app.get('/health', (req, res) => {
     timezone: THAILAND_TIME_ZONE,
     thailandTime: formatBangkokDateTime(new Date()),
     mongo: mongoStates[mongoReadyState] || 'unknown',
+    line: {
+      accessTokenConfigured: Boolean(config.lineAccessToken),
+      userIdConfigured: Boolean(config.lineUserId),
+      pushConfigured: Boolean(config.lineAccessToken && config.lineUserId)
+    },
     ai: ai.getStatus()
   });
 });
