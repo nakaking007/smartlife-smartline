@@ -29,7 +29,7 @@ const userRoutes = require('./routes/userRoutes');
 const appointmentRoutes = require('./routes/appointments');
 const todoRoutes = require('./routes/todos');
 const earthquakeWarningRoutes = require('./routes/earthquakeWarnings');
-require('./cron');
+const cronJobs = require('./cron');
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -80,6 +80,35 @@ app.get('/health', (req, res) => {
     mongo: mongoStates[mongoReadyState] || 'unknown',
     ai: ai.getStatus()
   });
+});
+
+app.post('/cron/morning-catchup', async (req, res) => {
+  const bangkokParts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: THAILAND_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23'
+  }).formatToParts(new Date()).reduce((result, part) => {
+    if (part.type !== 'literal') result[part.type] = Number(part.value);
+    return result;
+  }, {});
+  const bangkokMinutes = bangkokParts.hour * 60 + bangkokParts.minute;
+
+  if (bangkokMinutes < 5 * 60 + 55 || bangkokMinutes >= 12 * 60) {
+    res.status(403).json({ error: 'Morning catch-up is available from 05:55 to 11:59 Asia/Bangkok' });
+    return;
+  }
+
+  try {
+    const sent = await cronJobs.sendDailyMorningReport(new Date());
+    await cronJobs.syncLiveDisasterAlerts({ force: true });
+    await cronJobs.sendUrgentAlerts();
+    res.json({ status: 'ok', morningSent: sent });
+  } catch (err) {
+    console.error('SmartLife morning catch-up endpoint error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/ai/status', (req, res) => {
