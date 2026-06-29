@@ -210,11 +210,11 @@ function buildUsgsAlertCandidate(feature, now = new Date()) {
   const eventAt = properties.time ? new Date(properties.time) : null;
   const tsunamiFlag = Number(properties.tsunami || 0) > 0;
 
-  if (latitude === null || longitude === null || magnitude === null || !isInAseanBounds(latitude, longitude)) {
+  if (latitude === null || longitude === null || magnitude === null || !isInAsiaBounds(latitude, longitude)) {
     return null;
   }
 
-  if (magnitude < 5 && !tsunamiFlag) {
+  if (magnitude < 4.5 && !tsunamiFlag) {
     return null;
   }
 
@@ -235,7 +235,7 @@ function buildUsgsAlertCandidate(feature, now = new Date()) {
     magnitude,
     source: 'USGS',
     sourceUrl: properties.url,
-    externalId: `usgs:${id}`,
+    externalId: `eq:usgs:${id}`,
     startsAt: eventAt,
     expiresAt,
     active: true

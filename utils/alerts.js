@@ -42,6 +42,13 @@ const ASEAN_BOUNDS = {
   maxLongitude: 142
 };
 
+const ASIA_BOUNDS = {
+  minLatitude: -11,
+  maxLatitude: 56,
+  minLongitude: 26,
+  maxLongitude: 146
+};
+
 const EARTHQUAKE_TYPES = ['earthquake', 'quake', 'แผ่นดินไหว'];
 const STORM_TYPES = ['storm', 'thunderstorm', 'typhoon', 'cyclone', 'tropical_storm', 'พายุ'];
 const TSUNAMI_TYPES = ['tsunami', 'tidal_wave', 'สึนามิ', 'สึมามิ', 'คลื่นสึนามิ'];
@@ -95,10 +102,20 @@ function buildAseanScopeQuery() {
   return buildAreaScopeQuery(ASEAN_COUNTRY_VALUES, ASEAN_AREA_REGEX, ASEAN_BOUNDS);
 }
 
+function buildAsiaEarthquakeScopeQuery() {
+  return {
+    $and: [
+      { latitude: { $gte: ASIA_BOUNDS.minLatitude, $lte: ASIA_BOUNDS.maxLatitude } },
+      { longitude: { $gte: ASIA_BOUNDS.minLongitude, $lte: ASIA_BOUNDS.maxLongitude } }
+    ]
+  };
+}
+
 function buildAlertScopeQuery() {
   return {
     $or: [
-      { $and: [{ type: { $in: ASEAN_ALERT_TYPES } }, buildAseanScopeQuery()] },
+      { $and: [{ type: { $in: EARTHQUAKE_TYPES } }, buildAsiaEarthquakeScopeQuery()] },
+      { $and: [{ type: { $in: [...STORM_TYPES, ...TSUNAMI_TYPES] } }, buildAseanScopeQuery()] },
       { $and: [{ type: { $nin: ASEAN_ALERT_TYPES } }, buildThailandScopeQuery()] },
       { $and: [{ type: { $exists: false } }, buildThailandScopeQuery()] }
     ]
@@ -106,6 +123,10 @@ function buildAlertScopeQuery() {
 }
 
 function buildScopeQueryForTypes(types) {
+  if (types.length > 0 && types.every(type => EARTHQUAKE_TYPES.includes(type))) {
+    return buildAsiaEarthquakeScopeQuery();
+  }
+
   const regionalTypes = types.filter(type => ASEAN_ALERT_TYPES.includes(type));
   const localTypes = types.filter(type => !ASEAN_ALERT_TYPES.includes(type));
 

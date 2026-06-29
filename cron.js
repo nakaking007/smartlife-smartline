@@ -14,7 +14,7 @@ const earthquakeWarnings = require('./utils/earthquakeWarnings');
 const line = require('./utils/line');
 const { THAILAND_TIME_ZONE, formatBangkokDateTime, formatBangkokTime, getBangkokDateKey } = require('./utils/time');
 
-const LIVE_DISASTER_SYNC_INTERVAL_MS = 15 * 60 * 1000;
+const LIVE_DISASTER_SYNC_INTERVAL_MS = 2 * 60 * 1000;
 const MORNING_REPORT_JOB = 'morning-report';
 const BEDTIME_TODO_PROMPT_JOB = 'bedtime-todo-prompt';
 const MORNING_REPORT_CATCH_UP_END_HOUR = 12;
