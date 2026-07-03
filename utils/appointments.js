@@ -314,14 +314,14 @@ async function getAppointment(id) {
 }
 
 async function getToday(baseDate = new Date()) {
-  const { start, end } = getBangkokDayRange(baseDate);
+  const { end } = getBangkokDayRange(baseDate);
 
   return Appointment.find({
     startAt: { $lte: end },
     $or: [
-      { endAt: { $gte: start } },
-      { endAt: null },
-      { endAt: { $exists: false } }
+      { endAt: { $gte: baseDate } },
+      { endAt: null, startAt: { $gte: baseDate } },
+      { endAt: { $exists: false }, startAt: { $gte: baseDate } }
     ],
     status: { $ne: 'deleted' }
   }).sort({ startAt: 1 });

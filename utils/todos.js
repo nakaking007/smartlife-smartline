@@ -3,6 +3,7 @@ const Todo = require('../models/Todo');
 const { getBangkokDayRange, getBangkokWeekRange, parseBangkokDate } = require('./time');
 
 const DEFAULT_REMINDER_MINUTES = 60;
+const DUE_PROMPT_GRACE_MS = 2 * 60 * 60 * 1000;
 
 const EDITABLE_FIELDS = [
   'title',
@@ -132,10 +133,10 @@ async function deleteTodo(id) {
 }
 
 async function getToday(baseDate = new Date()) {
-  const { start, end } = getBangkokDayRange(baseDate);
+  const { end } = getBangkokDayRange(baseDate);
   return listTodos({
     openOnly: true,
-    dueAtFrom: start,
+    dueAtFrom: baseDate,
     dueAtTo: end,
     limit: 100
   });
@@ -172,7 +173,10 @@ async function findDueTodoReminders(now = new Date()) {
 async function findDueTodoPrompts(now = new Date()) {
   return Todo.find({
     status: 'open',
-    dueAt: { $lte: now },
+    dueAt: {
+      $gte: new Date(now.getTime() - DUE_PROMPT_GRACE_MS),
+      $lte: now
+    },
     duePromptSentAt: { $exists: false }
   }).sort({ dueAt: 1 }).limit(50);
 }

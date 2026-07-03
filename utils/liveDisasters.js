@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { formatBangkokDateTime } = require('./time');
+const { formatBangkokDateTime, getBangkokDateKey } = require('./time');
 const {
   assessEarthquakeMagnitude,
   assessStormWind,
@@ -112,6 +112,7 @@ function parseGdacsItems(xml) {
     const description = stripHtml(extractXmlTag(item, 'description'));
     const subject = stripHtml(extractXmlTag(item, 'dc:subject'));
     const link = stripHtml(extractXmlTag(item, 'link'));
+    const guid = stripHtml(extractXmlTag(item, 'guid'));
     const latitude = toNumber(extractXmlTag(item, 'geo:lat'));
     const longitude = toNumber(extractXmlTag(item, 'geo:long'));
     const publishedAt = parseGdacsDate(extractXmlTag(item, 'pubDate'));
@@ -121,11 +122,37 @@ function parseGdacsItems(xml) {
       description,
       subject,
       link,
+      guid,
       latitude,
       longitude,
       publishedAt
     };
   });
+}
+
+function buildTmdCapAlertCandidate(item, now = new Date()) {
+  const eventAt = item.publishedAt;
+  if (!eventAt || !isRecent(eventAt, now)) {
+    return null;
+  }
+
+  const text = `${item.title || ''} ${item.description || ''}`;
+  const type = /สึนามิ|tsunami/i.test(text) ? 'tsunami' : 'storm';
+
+  return {
+    type,
+    severity: 'warning',
+    title: item.title || 'ประกาศเตือนภัยกรมอุตุนิยมวิทยา',
+    areaText: `ประเทศไทย - ${item.title || 'ประกาศเตือนภัย'}`,
+    category: 'ประกาศเตือนภัยทางการ',
+    effects: String(item.description || '').slice(0, 1200),
+    source: 'กรมอุตุนิยมวิทยา (TMD CAP)',
+    sourceUrl: item.link,
+    externalId: `tmd-cap:${type}:${getBangkokDateKey(eventAt)}`,
+    startsAt: eventAt,
+    expiresAt: addHours(eventAt, 24),
+    active: true
+  };
 }
 
 function getGdacsType(item) {
@@ -371,6 +398,14 @@ async function fetchGdacsAsiaEvents(limit = 6) {
   return items.slice(0, limit);
 }
 
+async function fetchTmdCapWarnings(limit = 10) {
+  const res = await axios.get('https://www.tmd.go.th/api/xml/CAP', {
+    timeout: 15000,
+    responseType: 'text'
+  });
+  return parseGdacsItems(res.data).slice(0, limit);
+}
+
 async function buildAsiaDisasterReport() {
   const results = await Promise.allSettled([
     fetchAsiaEarthquakes(5),
@@ -413,7 +448,8 @@ async function buildAsiaDisasterReport() {
 async function fetchLiveDisasterAlertCandidates(now = new Date()) {
   const results = await Promise.allSettled([
     fetchAsiaEarthquakes(20),
-    fetchGdacsAsiaEvents(20)
+    fetchGdacsAsiaEvents(20),
+    fetchTmdCapWarnings(10)
   ]);
   const candidates = [];
 
@@ -425,7 +461,18 @@ async function fetchLiveDisasterAlertCandidates(now = new Date()) {
     candidates.push(...results[1].value.map(item => buildGdacsAlertCandidate(item, now)).filter(Boolean));
   }
 
-  return candidates;
+  if (results[2].status === 'fulfilled') {
+    candidates.push(...results[2].value.map(item => buildTmdCapAlertCandidate(item, now)).filter(Boolean));
+  }
+
+  const uniqueCandidates = new Map();
+  for (const candidate of candidates) {
+    if (!uniqueCandidates.has(candidate.externalId)) {
+      uniqueCandidates.set(candidate.externalId, candidate);
+    }
+  }
+
+  return [...uniqueCandidates.values()];
 }
 
 module.exports = {
@@ -433,6 +480,7 @@ module.exports = {
   fetchLiveDisasterAlertCandidates,
   fetchAsiaEarthquakes,
   fetchGdacsAsiaEvents,
+  fetchTmdCapWarnings,
   parseGdacsItems,
   formatUsgsEarthquake,
   formatGdacsEvent

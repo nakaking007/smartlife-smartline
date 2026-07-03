@@ -366,6 +366,7 @@ function testLiveDisasterParsing() {
       <title>Green earthquake (Magnitude 5.7M) in Japan</title>
       <description>Depth 11km</description>
       <dc:subject>EQ1</dc:subject>
+      <guid>gdacs-test-1</guid>
       <geo:lat>36.1</geo:lat>
       <geo:long>140.1</geo:long>
       <pubDate>Mon, 01 Jun 2026 00:00:00 GMT</pubDate>
@@ -374,6 +375,7 @@ function testLiveDisasterParsing() {
   const items = liveDisasters.parseGdacsItems(xml);
   assert.strictEqual(items.length, 1);
   assert.strictEqual(items[0].latitude, 36.1);
+  assert.strictEqual(items[0].guid, 'gdacs-test-1');
   assertIncludes(liveDisasters.formatGdacsEvent(items[0]), 'ส่วนของเอเชีย:');
   assertIncludes(liveDisasters.formatGdacsEvent(items[0]), 'ห่างจากไทย');
 }

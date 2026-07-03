@@ -81,7 +81,6 @@ async function sendMorningReport() {
     const report = await getWeatherReport();
     const appointmentsToday = await appointments.getToday();
     const todosToday = await todos.getToday();
-    const overdueTodos = await todos.getOverdue();
     const events = appointmentsToday.map(item => ({
       eventId: item._id,
       summary: item.title || '-',
@@ -96,13 +95,7 @@ async function sendMorningReport() {
         responsible: item.responsible,
         priority: item.priority || 'normal'
       })),
-      overdue: overdueTodos.map(item => ({
-        id: item._id,
-        title: item.title || '-',
-        dueAt: item.dueAt,
-        responsible: item.responsible,
-        priority: item.priority || 'normal'
-      }))
+      overdue: []
     };
 
     await line.sendMorningGreeting({
@@ -165,7 +158,7 @@ async function sendMorningActiveAlerts() {
 
     await syncLiveDisasterAlerts({ force: true });
 
-    const activeAlerts = await alerts.listActiveUrgentAlerts(new Date(), 10);
+    const activeAlerts = await alerts.listUnsentUrgentAlerts(config.lineUserId, new Date());
     let sentCount = 0;
 
     for (const alert of activeAlerts) {
