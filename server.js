@@ -1,7 +1,6 @@
 // server.js
 require('dotenv').config();
 
-const path = require('path');
 const express = require('express');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
@@ -12,6 +11,7 @@ const tasks = require('./utils/tasks');
 const appointments = require('./utils/appointments');
 const alerts = require('./utils/alerts');
 const speech = require('./utils/speech');
+const writing = require('./utils/writing');
 const manual = require('./utils/manual');
 const ai = require('./utils/ai');
 const weather = require('./utils/weather');
@@ -39,7 +39,6 @@ const pendingAppointmentLists = new Map();
 const pendingModes = new Map();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use('/generated', express.static(path.join(__dirname, 'public', 'generated')));
 app.use('/users', userRoutes);
 app.use('/appointments', appointmentRoutes);
 app.use('/todos', todoRoutes);
@@ -1386,11 +1385,11 @@ function buildMainMenuMessage() {
       "4. แปลภาษา",
       "5. ตอบคำถาม",
       "6. ดูนัดหมาย",
-      "7. สร้างภาพ",
+      "7. เขียนบทความ/สุนทรพจน์",
       "",
       "คำสั่งพิมพ์เร็ว:",
       "/สภาพอากาศ /นัดหมาย /ภัยพิบัติ /พรุ่งนี้ /สัปดาห์นี้ /เดือนนี้",
-      "/ปฏิทิน /สร้างภาพ /คำถามอื่น /คำถาม /แปลภาษา /สมัคร /ปลดลอค /บริการฉุกเฉิน /ตรวจเช็ค"
+      "/ปฏิทิน /บทความ /สุนทรพจน์ /คำถามอื่น /คำถาม /แปลภาษา /สมัคร /ปลดลอค /บริการฉุกเฉิน /ตรวจเช็ค"
     ].join("\n"),
     quickReply: {
       items: [
@@ -1449,14 +1448,6 @@ function buildMainMenuMessage() {
             type: 'message',
             label: 'ดูนัดหมาย',
             text: '/ปฏิทิน'
-          }
-        },
-        {
-          type: 'action',
-          action: {
-            type: 'message',
-            label: 'สร้างภาพ',
-            text: 'สร้างภาพ'
           }
         },
         {
@@ -1544,186 +1535,6 @@ function buildChatPromptMessage(userId) {
   };
 
   return message;
-}
-
-function buildImagePromptMessage(userId) {
-  if (userId) {
-    pendingModes.set(userId, { type: 'image_prompt', hasSourceImage: false });
-  }
-
-  const status = ai.getStatus();
-  const message = buildCommandOutputMessage({
-    title: 'สร้างภาพ',
-    available: status.imageConfigured,
-    detail: [
-      'ต้องการสร้างภาพเกี่ยวกับอะไรคะ',
-      'ส่งภาพต้นฉบับได้ แล้วพิมพ์รายละเอียดภาพต่อ',
-      'ระบบจะเขียนพร้อมท์ภาษาไทยขนาด 1:1 ให้ตรวจ ก่อนสร้างจริง'
-    ].join("\n"),
-    command: '/สร้างภาพ',
-    actionLabel: 'เริ่ม'
-  });
-
-  message.quickReply = {
-    items: [
-      {
-        type: 'action',
-        action: { type: 'message', label: 'เริ่มจากข้อความ', text: 'ภาพคนเมืองตรวจฝุ่นก่อนออกจากบ้าน สไตล์อินโฟกราฟิก' }
-      },
-      {
-        type: 'action',
-        action: { type: 'message', label: 'ยกเลิก', text: 'เมนู' }
-      }
-    ]
-  };
-
-  return message;
-}
-
-function hasThaiText(text) {
-  return /[\u0E00-\u0E7F]/.test(String(text || ''));
-}
-
-function normalizeImageRequest(description) {
-  return String(description || '')
-    .trim()
-    .replace(/พฃยานาค/g, 'พญานาค')
-    .replace(/พยานาค/g, 'พญานาค');
-}
-
-function buildImageGlossary(request) {
-  const lines = [];
-
-  if (/พญานาค|นาคา|นาค/.test(request)) {
-    lines.push('Important Thai cultural subject: พญานาค means Thai Naga serpent, a sacred mythological serpent from Thai/Lao Buddhist and Mekong culture.');
-    lines.push('Depict a majestic serpent/dragon-like Naga with ornate scales, crest, and Thai temple/Mekong-inspired details if suitable.');
-    lines.push('Do not depict Native American people, Indian chiefs, tribal headdresses, human warriors, or unrelated Indigenous American imagery.');
-  }
-
-  return lines;
-}
-
-function requestMentionsNonThaiPlace(request) {
-  return /ญี่ปุ่น|จีน|เกาหลี|อินเดีย|อเมริกา|ยุโรป|อังกฤษ|ฝรั่งเศส|อิตาลี|ลาว|พม่า|เมียนมา|เขมร|กัมพูชา|เวียดนาม|มาเลเซีย|สิงคโปร์|อินโดนีเซีย|japan|china|korea|india|america|usa|europe|england|france|italy|laos|myanmar|cambodia|vietnam|malaysia|singapore|indonesia/i.test(request);
-}
-
-function buildThaiImageReviewPrompt({ originalRequest, userRequest, hasSourceImage }) {
-  const lines = [
-    'พร้อมท์ภาษาไทยสำหรับตรวจแก้',
-    '',
-    `สิ่งที่ต้องการสร้าง: ${userRequest || '-'}`,
-    originalRequest !== userRequest ? `แก้คำผิดจาก: ${originalRequest}` : null,
-    'ขนาดภาพ: 1:1',
-    requestMentionsNonThaiPlace(userRequest)
-      ? 'บริบทประเทศ/วัฒนธรรม: ตามที่ผู้ใช้ระบุในคำขอ'
-      : 'บริบทประเทศ/วัฒนธรรม: ไทยเป็นค่าเริ่มต้น ใช้องค์ประกอบไทยก่อน เช่น แสง สี เครื่องแต่งกาย สถาปัตยกรรม ลายไทย ธรรมชาติ หรือวิถีชีวิตไทยตามความเหมาะสม',
-    hasSourceImage ? 'ใช้ภาพต้นฉบับเป็นบริบท ถ้า provider รองรับภาพอ้างอิง' : null,
-    /พญานาค|นาคา|นาค/.test(userRequest)
-      ? 'หมายเหตุเฉพาะ: พญานาคคือพญานาค/นาคแบบไทย-ลาว ลุ่มน้ำโขง ไม่ใช่อินเดียนแดงหรือชนเผ่าอเมริกัน'
-      : null,
-    'ข้อกำกับ: สร้างให้ตรงคำขอ ไม่เปลี่ยนตัวแบบหลัก ไม่เพิ่มโลโก้ ตราราชการ ข้อความ หรือวัตถุที่ไม่ได้ขอ'
-  ];
-
-  return lines.filter(Boolean).join('\n');
-}
-
-async function buildImagePromptFromDescription(description, hasSourceImage = false) {
-  const originalRequest = String(description || '').trim();
-  const userRequest = normalizeImageRequest(originalRequest);
-  let englishInterpretation = '';
-
-  if (hasThaiText(userRequest)) {
-    try {
-      englishInterpretation = await ai.translateWithMyMemoryRaw(userRequest, 'th|en');
-    } catch (err) {
-      console.warn(`SmartLife image prompt translation skipped: ${err.message}`);
-    }
-  }
-
-  const thaiDefault = requestMentionsNonThaiPlace(userRequest)
-    ? 'Use the country or culture explicitly mentioned by the user.'
-    : 'Default to Thailand and Thai visual culture unless the user explicitly specifies another country. Prefer Thai/Lao Mekong cultural context, Thai architecture, Thai clothing, Thai decorative motifs, Thai natural scenery, or Thai everyday life when suitable.';
-
-  const generationPrompt = [
-    'Create exactly one image that follows the user request faithfully.',
-    `Original user request in Thai: ${originalRequest}`,
-    originalRequest !== userRequest ? `Corrected Thai request: ${userRequest}` : null,
-    englishInterpretation ? `English interpretation: ${englishInterpretation}` : null,
-    thaiDefault,
-    ...buildImageGlossary(userRequest),
-    hasSourceImage ? 'Use the uploaded source image as visual reference if the image provider supports image reference.' : null,
-    'Keep every requested subject, action, style, color, text, number, and setting.',
-    'Do not replace the main subject, change the requested style, or add unrelated objects, logos, text, official badges, or warnings.',
-    'Use a square 1:1 aspect ratio, clear composition, sharp details, and minimal clutter.'
-  ].filter(Boolean).join('\n');
-
-  return {
-    reviewPrompt: buildThaiImageReviewPrompt({ originalRequest, userRequest, hasSourceImage }),
-    generationPrompt
-  };
-}
-
-function buildImagePromptReviewMessage(prompt) {
-  const reviewPrompt = typeof prompt === 'string' ? prompt : prompt.reviewPrompt;
-
-  return {
-    type: 'text',
-    text: [
-      "ระบบเขียนพร้อมท์ให้แล้วค่ะ",
-      "",
-      reviewPrompt,
-      "",
-      "ถ้าพร้อมให้พิมพ์ /สร้างเลย",
-      "ถ้าต้องการแก้ ให้พิมพ์ /แก้พร้อมท์ ตามด้วยรายละเอียดใหม่"
-    ].join("\n"),
-    quickReply: {
-      items: [
-        {
-          type: 'action',
-          action: { type: 'message', label: 'สร้างเลย', text: '/สร้างเลย' }
-        },
-        {
-          type: 'action',
-          action: { type: 'message', label: 'แก้ prompt', text: '/แก้พร้อมท์ ' }
-        }
-      ]
-    }
-  };
-}
-
-function buildImageResultMessages(imageMessage, prompt) {
-  if (!imageMessage || imageMessage.type !== 'image' || !imageMessage.originalContentUrl) {
-    return imageMessage;
-  }
-
-  const reviewPrompt = prompt && (typeof prompt === 'string' ? prompt : prompt.reviewPrompt);
-
-  return [
-    imageMessage,
-    {
-      type: 'text',
-      text: [
-        'สร้างภาพแล้วค่ะ',
-        'ดาวน์โหลด/เปิดภาพจากลิงก์นี้ได้:',
-        imageMessage.originalContentUrl,
-        reviewPrompt ? '' : null,
-        reviewPrompt ? 'Image prompt for editing:' : null,
-        reviewPrompt ? reviewPrompt : null
-      ].filter(Boolean).join("\n"),
-      quickReply: {
-        items: [
-          {
-            type: 'action',
-            action: {
-              type: 'uri',
-              label: 'ดาวน์โหลด',
-              uri: imageMessage.originalContentUrl
-            }
-          }
-        ]
-      }
-    }
-  ];
 }
 
 function buildAppointmentViewMenuMessage() {
@@ -1976,21 +1787,21 @@ function buildLineCommandChecklist() {
     `/นัดหมาย: มี`,
     `/แบบฟอร์ม: ${hasPublicUrl() ? 'มี' : 'ไม่มีลิงก์ HTTPS มือถือ'}`,
     `/คำถามอื่น: ${status.textAiConfigured ? 'มี' : 'ไม่มี provider แชต'}`,
-    `/สร้างภาพ: ${status.imageConfigured ? 'มี' : 'ไม่มี provider สร้างภาพ'}`,
+    `/บทความ: ${status.textAiConfigured ? 'มี' : 'ไม่มี provider AI'}`,
+    `/สุนทรพจน์: ${status.textAiConfigured ? 'มี' : 'ไม่มี provider AI'}`,
     `/แปลภาษา: มี`,
     `ช่องทางโอนจริง: ${hasPaymentOutputConfigured() ? 'มี' : 'ไม่มี'}`
   ];
 
   const message = buildCommandOutputMessage({
     title: 'ตรวจเช็ค SmartLife',
-    available: status.textAiConfigured || status.imageConfigured || hasPublicUrl(),
+    available: status.textAiConfigured || hasPublicUrl(),
     detail: [
       'สรุปสถานะคำสั่งหลักตามที่ขอ',
       '',
       ...lines,
       '',
-      `AI: ${status.configuredProviders && status.configuredProviders.length ? status.configuredProviders.join(' > ') : 'ไม่มี'}`,
-      `สร้างภาพ: ${status.configuredImageProviders && status.configuredImageProviders.length ? status.configuredImageProviders.join(' > ') : 'ไม่มี'}`
+      `AI: ${status.configuredProviders && status.configuredProviders.length ? status.configuredProviders.join(' > ') : 'ไม่มี'}`
     ].join("\n"),
     command: '/ตรวจเช็ค',
     actionLabel: 'ตรวจอีก'
@@ -2000,7 +1811,7 @@ function buildLineCommandChecklist() {
     items: [
       { type: 'action', action: { type: 'message', label: 'ฟอร์ม', text: '/แบบฟอร์ม' } },
       { type: 'action', action: { type: 'message', label: 'ถาม AI', text: '/คำถามอื่น' } },
-      { type: 'action', action: { type: 'message', label: 'สร้างภาพ', text: '/สร้างภาพ' } }
+      { type: 'action', action: { type: 'message', label: 'เขียนบทความ', text: '/บทความ การพัฒนาคุณภาพชีวิต' } }
     ]
   };
 
@@ -2743,7 +2554,7 @@ async function handleTextMessage(event) {
   }
 
   if (['สร้างภาพ', 'วาดภาพ', 'ทำภาพ'].includes(command)) {
-    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
+    await line.reply(event.replyToken, 'ระบบสร้างภาพถูกลบออกแล้วค่ะ');
     return true;
   }
 
@@ -2909,50 +2720,6 @@ async function handleTextMessage(event) {
   }
 
   const pendingMode = getPendingMode(userId);
-  if (pendingMode && ['image_prompt', 'image_review'].includes(pendingMode.type)) {
-    if (userId) {
-      pendingModes.delete(userId);
-    }
-    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
-    return true;
-  }
-
-  if (pendingMode && ['disabled_image_prompt', 'disabled_image_review'].includes(pendingMode.type)) {
-    const editPromptMatch = text.match(/^\/?แก้(?:ไข)?(?:พร้อมท์|prompt)\s+([\s\S]+)$/i);
-
-    if (['สร้างเลย', 'สร้างภาพเลย', 'ตกลงสร้าง', 'ok'].includes(command)) {
-      const generationPrompt = pendingMode.generationPrompt || pendingMode.prompt;
-
-      if (!generationPrompt) {
-        await line.reply(event.replyToken, 'ยังไม่มี prompt ค่ะ พิมพ์ /สร้างภาพ แล้วบอกภาพที่ต้องการก่อนนะคะ');
-        return true;
-      }
-
-      const imageMessage = await ai.generateImage(generationPrompt, {
-        size: '1024x1024'
-      });
-      pendingModes.delete(userId);
-      await line.replyMessage(event.replyToken, buildImageResultMessages(imageMessage, pendingMode));
-      return true;
-    }
-
-    if (editPromptMatch) {
-      const prompt = await buildImagePromptFromDescription(editPromptMatch[1], pendingMode.hasSourceImage);
-      pendingModes.set(userId, { ...pendingMode, type: 'image_review', ...prompt });
-      await line.replyMessage(event.replyToken, buildImagePromptReviewMessage(prompt));
-      return true;
-    }
-
-    if (pendingMode.type === 'image_prompt' || pendingMode.type === 'image_review') {
-      const prompt = await buildImagePromptFromDescription(text, pendingMode.hasSourceImage);
-      const imageMessage = await ai.generateImage(prompt.generationPrompt, {
-        size: '1024x1024'
-      });
-      pendingModes.delete(userId);
-      await line.replyMessage(event.replyToken, buildImageResultMessages(imageMessage, prompt));
-      return true;
-    }
-  }
 
   if (['แบบฟอร์ม', 'ฟอร์ม', 'แยกแบบฟอร์ม'].includes(text)) {
     await line.replyMessage(event.replyToken, buildFormSelectorMessage());
@@ -3023,7 +2790,7 @@ async function handleTextMessage(event) {
   }
 
   if (['สร้างภาพ', 'วาดภาพ', 'ทำภาพ'].includes(text)) {
-    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
+    await line.reply(event.replyToken, 'ระบบสร้างภาพถูกลบออกแล้วค่ะ');
     return true;
   }
 
@@ -3036,9 +2803,7 @@ async function handleTextMessage(event) {
         `Provider: ${status.provider}`,
         `ลำดับสำรอง: ${status.providerOrder && status.providerOrder.length ? status.providerOrder.join(' > ') : '-'}`,
         `ตัวที่ตั้งค่าแล้ว: ${status.configuredProviders && status.configuredProviders.length ? status.configuredProviders.join(', ') : 'ยังไม่มี'}`,
-        `แชต/แปล: ${status.textAiConfigured ? 'พร้อมใช้' : 'ยังไม่ตั้งค่า'}`,
-        `สร้างภาพสำรอง: ${status.imageProviderOrder && status.imageProviderOrder.length ? status.imageProviderOrder.join(' > ') : '-'}`,
-        `สร้างภาพ: ${status.imageConfigured ? 'พร้อมใช้' : 'ยังไม่พร้อม'}`
+        `แชต/บทความ/สุนทรพจน์/แปล: ${status.textAiConfigured ? 'พร้อมใช้' : 'ยังไม่ตั้งค่า'}`
       ].join("\n")
     );
     return true;
@@ -3125,10 +2890,35 @@ async function handleTextMessage(event) {
     return true;
   }
 
-  const speechMatch = text.match(/^(?:คำกล่าว|เขียนคำกล่าว)\s+(.+)$/);
+  const articleMatch = text.match(/^\/?(?:บทความ|เขียนบทความ)\s+([\s\S]+)$/i);
+  if (articleMatch) {
+    try {
+      const article = await writing.createArticle(articleMatch[1]);
+      await line.replyMessage(event.replyToken, line.createTextMessages(article));
+    } catch (err) {
+      await line.reply(event.replyToken, `ยังเขียนบทความไม่ได้ค่ะ: ${err.message}`);
+    }
+    return true;
+  }
+
+  if (/^\/?(?:บทความ|เขียนบทความ)$/i.test(text)) {
+    await line.reply(event.replyToken, 'กรุณาพิมพ์หัวข้อ เช่น /บทความ การเรียนรู้ตลอดชีวิต');
+    return true;
+  }
+
+  const speechMatch = text.match(/^\/?(?:คำกล่าว|เขียนคำกล่าว|สุนทรพจน์|เขียนสุนทรพจน์)\s+([\s\S]+)$/i);
   if (speechMatch) {
-    const draft = await speech.createSpeechDraft(speechMatch[1]);
-    await line.reply(event.replyToken, draft);
+    try {
+      const draft = await speech.createSpeechDraft(speechMatch[1]);
+      await line.replyMessage(event.replyToken, line.createTextMessages(draft));
+    } catch (err) {
+      await line.reply(event.replyToken, `ยังเขียนสุนทรพจน์ไม่ได้ค่ะ: ${err.message}`);
+    }
+    return true;
+  }
+
+  if (/^\/?(?:คำกล่าว|เขียนคำกล่าว|สุนทรพจน์|เขียนสุนทรพจน์)$/i.test(text)) {
+    await line.reply(event.replyToken, 'กรุณาพิมพ์งานและโอกาส เช่น /สุนทรพจน์ กล่าวเปิดการอบรมครู');
     return true;
   }
 
@@ -3160,7 +2950,7 @@ async function handleTextMessage(event) {
     if (userId) {
       pendingModes.delete(userId);
     }
-    await line.reply(event.replyToken, 'ปิดฟังก์ชันสร้างภาพแล้วค่ะ ระบบจะเก็บเครดิตไว้ใช้กับงานสำคัญ เช่น คำกล่าว นัดหมาย และ To-do');
+    await line.reply(event.replyToken, 'ระบบสร้างภาพถูกลบออกแล้วค่ะ');
     return true;
   }
 
@@ -3265,27 +3055,7 @@ async function handleTextMessage(event) {
 }
 
 async function handleImageMessage(event) {
-  const userId = event.source && event.source.userId;
-  const pendingMode = getPendingMode(userId);
-
-  if (pendingMode && ['image_prompt', 'image_review'].includes(pendingMode.type)) {
-    pendingModes.set(userId, {
-      ...pendingMode,
-      type: 'image_prompt',
-      hasSourceImage: true
-    });
-    await line.reply(
-      event.replyToken,
-      [
-        'ได้รับภาพต้นฉบับแล้วค่ะ',
-        'ตอนนี้ระบบจะใช้เป็นบริบทในขั้นเขียนพร้อมท์ภาษาไทยก่อน หาก provider สร้างภาพรองรับภาพอ้างอิงจะต่อยอดได้',
-        'กรุณาพิมพ์รายละเอียดภาพที่อยากให้สร้าง เช่น โทนภาพ ฉาก ข้อความบนภาพ หรือวัตถุประสงค์'
-      ].join("\n")
-    );
-    return true;
-  }
-
-  await line.reply(event.replyToken, 'ได้รับรูปแล้วค่ะ หากต้องการสร้างภาพใหม่ ให้พิมพ์ /สร้างภาพ ก่อน แล้วส่งรูปหรือรายละเอียดภาพได้เลย');
+  await line.reply(event.replyToken, 'ได้รับรูปแล้วค่ะ แต่ระบบสร้างภาพถูกลบออกแล้ว');
   return true;
 }
 
@@ -3373,7 +3143,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  app,
-  buildImagePromptFromDescription,
-  normalizeImageRequest
+  app
 };

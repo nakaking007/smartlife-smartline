@@ -1,12 +1,9 @@
 // utils/ai.js
-const fs = require('fs');
-const path = require('path');
 const axios = require('axios');
 const config = require('../config');
 
 const conversations = new Map();
 const VALID_TEXT_PROVIDERS = ['gemini', 'groq', 'openrouter', 'huggingface', 'pollinations', 'ollama'];
-const VALID_IMAGE_PROVIDERS = ['openai', 'huggingface', 'pollinations'];
 const COMMON_TRANSLATIONS = new Map([
   ['ฉันรักเธอ', 'I love you'],
   ['ฉันรักคุณ', 'I love you'],
@@ -57,7 +54,7 @@ function isProviderConfigured(provider) {
   if (provider === 'groq') return Boolean(config.groqApiKey);
   if (provider === 'openrouter') return Boolean(config.openrouterApiKey);
   if (provider === 'huggingface') return Boolean(config.huggingFaceToken);
-  if (provider === 'pollinations') return Boolean(config.pollinationsApiKey);
+  if (provider === 'pollinations') return true;
   if (provider === 'ollama') return Boolean(config.ollamaBaseUrl && config.ollamaModel);
 
   return false;
@@ -93,39 +90,6 @@ function getProviderSummary() {
   }
 
   return requested.map(getProviderLabel).join(' > ');
-}
-
-function getRequestedImageProviderOrder() {
-  const provider = String(config.imageProvider || 'auto').trim().toLowerCase();
-
-  if (!provider || provider === 'none') {
-    return [];
-  }
-
-  if (provider === 'auto') {
-    return normalizeProviderList(config.imageFallbackProviders).filter(item => VALID_IMAGE_PROVIDERS.includes(item));
-  }
-
-  return normalizeProviderList(provider).filter(item => VALID_IMAGE_PROVIDERS.includes(item));
-}
-
-function getImageProviderLabel(provider) {
-  if (provider === 'openai') return `OpenAI Images (${config.openaiImageModel})`;
-  if (provider === 'huggingface') return `Hugging Face Image (${config.huggingFaceImageModel})`;
-  if (provider === 'pollinations') return `Pollinations Image (${config.pollinationsImageModel})`;
-  return provider || 'none';
-}
-
-function isImageProviderConfigured(provider) {
-  if (provider === 'openai') return Boolean(config.openaiApiKey && config.publicBaseUrl);
-  if (provider === 'huggingface') return Boolean(config.huggingFaceToken && config.publicBaseUrl);
-  if (provider === 'pollinations') return true;
-
-  return false;
-}
-
-function getConfiguredImageProviderOrder() {
-  return getRequestedImageProviderOrder().filter(isImageProviderConfigured);
 }
 
 function getHistory(userId) {
@@ -286,10 +250,9 @@ async function chatWithPollinations(userText, history, systemPrompt, options = {
     const legacyPrompt = [
       legacySystemPrompt,
       '',
-      ...history.slice(-4).flatMap(item => [
-        `User: ${item.user}`,
-        `Assistant: ${item.assistant}`
-      ]),
+      ...history.slice(-6).map(item => (
+        `${item.role === 'assistant' ? 'Assistant' : 'User'}: ${item.content}`
+      )),
       `User: ${promptUserText}`,
       'Assistant:'
     ].join('\n').slice(0, 3500);
@@ -379,11 +342,7 @@ async function generateText(userText, options = {}) {
   const providerOrder = getConfiguredProviderOrder();
 
   if (!providerOrder.length) {
-    return [
-      'ยังไม่ได้ตั้งค่าสมอง AI ค่ะ',
-      '',
-      'ตั้งค่า AI_PROVIDER=auto แล้วใส่ API key ฟรีอย่างน้อยหนึ่งตัว เช่น GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, HF_TOKEN, POLLINATIONS_API_KEY หรือเปิด Ollama ในเครื่องก่อนใช้งานแชตและแปลภาษาได้เต็มรูปแบบค่ะ'
-    ].join('\n');
+    throw new Error('ยังไม่มีผู้ให้บริการ AI ที่พร้อมใช้งาน');
   }
 
   const history = options.history || [];
@@ -406,11 +365,7 @@ async function generateText(userText, options = {}) {
     }
   }
 
-  return [
-    'ตอนนี้ AI ฟรีทุกตัวที่ตั้งค่าไว้ยังตอบไม่ได้ค่ะ ระบบลองสำรองให้ครบแล้ว',
-    '',
-    `ลองใหม่อีกครั้งภายหลัง หรือเพิ่ม provider สำรองใน AI_FALLBACK_PROVIDERS ได้ค่ะ (${failures.slice(0, 3).join(' | ')})`
-  ].join('\n');
+  throw new Error(`AI ฟรีทุกตัวตอบไม่ได้: ${failures.slice(0, 3).join(' | ')}`);
 }
 
 async function chat(userText, userId) {
@@ -519,203 +474,15 @@ async function translate(text, userId) {
   return answer;
 }
 
-function isImageGenerationConfigured() {
-  return getConfiguredImageProviderOrder().length > 0;
-}
-
-function getGeneratedImagesDir() {
-  return path.join(__dirname, '..', 'public', 'generated');
-}
-
-function saveGeneratedImage(buffer, extension = 'png') {
-  const dir = getGeneratedImagesDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const fileName = `smartlife-${Date.now()}.${extension}`;
-  const filePath = path.join(dir, fileName);
-  fs.writeFileSync(filePath, buffer);
-
-  const baseUrl = String(config.publicBaseUrl).replace(/\/+$/, '');
-  return `${baseUrl}/generated/${fileName}`;
-}
-
-function createImageGenerationPayload(prompt, options = {}) {
-  const model = config.openaiImageModel;
-  const payload = {
-    model,
-    prompt,
-    size: options.size || '1024x1024'
-  };
-
-  if (/^dall-e-/i.test(model)) {
-    payload.response_format = 'b64_json';
-  }
-
-  return payload;
-}
-
-async function generateImageWithOpenAI(prompt, options = {}) {
-  const res = await axios.post('https://api.openai.com/v1/images/generations', createImageGenerationPayload(prompt, options), {
-    headers: {
-      Authorization: `Bearer ${config.openaiApiKey}`
-    },
-    timeout: 120000
-  });
-
-  const image = res.data && res.data.data && res.data.data[0];
-
-  if (image && image.url) {
-    return {
-      type: 'image',
-      originalContentUrl: image.url,
-      previewImageUrl: image.url
-    };
-  }
-
-  if (!image || !image.b64_json) {
-    return {
-      type: 'text',
-      text: 'สร้างภาพไม่สำเร็จค่ะ ระบบไม่ได้รับรูปจากผู้ให้บริการ'
-    };
-  }
-
-  const imageUrl = saveGeneratedImage(Buffer.from(image.b64_json, 'base64'));
-
-  return {
-    type: 'image',
-    originalContentUrl: imageUrl,
-    previewImageUrl: imageUrl
-  };
-}
-
-async function generateImageWithHuggingFace(prompt) {
-  const { InferenceClient } = await import('@huggingface/inference');
-  const client = new InferenceClient(config.huggingFaceToken);
-  const imageBlob = await client.textToImage({
-    model: config.huggingFaceImageModel,
-    inputs: prompt
-  });
-  const buffer = Buffer.from(await imageBlob.arrayBuffer());
-  const imageUrl = saveGeneratedImage(buffer);
-
-  return {
-    type: 'image',
-    originalContentUrl: imageUrl,
-    previewImageUrl: imageUrl
-  };
-}
-
-async function generateImageWithPollinations(prompt, options = {}) {
-  if (!config.pollinationsApiKey) {
-    const [width, height] = String(options.size || '1024x1024')
-      .split('x')
-      .map(value => Number(value) || null);
-    const params = new URLSearchParams({
-      width: String(width || 1024),
-      height: String(height || 1024),
-      model: config.pollinationsImageModel || 'flux',
-      enhance: 'false',
-      nologo: 'true',
-      safe: 'true'
-    });
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt.slice(0, 550))}?${params.toString()}`;
-
-    return {
-      type: 'image',
-      originalContentUrl: imageUrl,
-      previewImageUrl: imageUrl
-    };
-  }
-
-  const res = await axios.post('https://gen.pollinations.ai/v1/images/generations', {
-    model: config.pollinationsImageModel,
-    prompt,
-    size: options.size || '1024x1024',
-    response_format: 'url',
-    safe: 'privacy,secrets'
-  }, {
-    headers: {
-      Authorization: `Bearer ${config.pollinationsApiKey}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: 120000
-  });
-
-  const image = res.data && res.data.data && res.data.data[0];
-
-  if (image && image.url) {
-    return {
-      type: 'image',
-      originalContentUrl: image.url,
-      previewImageUrl: image.url
-    };
-  }
-
-  if (image && image.b64_json && config.publicBaseUrl) {
-    const imageUrl = saveGeneratedImage(Buffer.from(image.b64_json, 'base64'));
-
-    return {
-      type: 'image',
-      originalContentUrl: imageUrl,
-      previewImageUrl: imageUrl
-    };
-  }
-
-  return {
-    type: 'text',
-    text: 'Pollinations สร้างภาพแล้วแต่ไม่ได้ส่ง URL รูปกลับมาค่ะ'
-  };
-}
-
-async function generateImageWithProvider(provider, prompt, options = {}) {
-  if (provider === 'openai') return generateImageWithOpenAI(prompt, options);
-  if (provider === 'huggingface') return generateImageWithHuggingFace(prompt);
-  if (provider === 'pollinations') return generateImageWithPollinations(prompt, options);
-
-  throw new Error(`Unsupported image provider: ${provider}`);
-}
-
-async function generateImage(prompt, options = {}) {
-  const providerOrder = getConfiguredImageProviderOrder();
-
-  if (!providerOrder.length) {
-    return {
-      type: 'text',
-      text: 'ยังไม่ได้ตั้งค่า provider สร้างภาพค่ะ ใส่ POLLINATIONS_API_KEY, HF_TOKEN หรือ OPENAI_API_KEY ก่อนใช้งานค่ะ'
-    };
-  }
-
-  const failures = [];
-
-  for (const provider of providerOrder) {
-    try {
-      return await generateImageWithProvider(provider, prompt, options);
-    } catch (err) {
-      const message = getSafeErrorMessage(err);
-      failures.push(`${provider}: ${message}`);
-      console.warn(`SmartLife image fallback skipped ${provider}: ${message}`);
-    }
-  }
-
-  return {
-    type: 'text',
-    text: `สร้างภาพยังไม่สำเร็จค่ะ ระบบลอง provider สำรองให้ครบแล้ว (${failures.slice(0, 3).join(' | ')})`
-  };
-}
-
 function getStatus() {
   const providerOrder = getRequestedProviderOrder();
   const configuredProviders = getConfiguredProviderOrder();
-  const imageProviderOrder = getRequestedImageProviderOrder();
-  const configuredImageProviders = getConfiguredImageProviderOrder();
 
   return {
     provider: getProviderSummary(),
     providerOrder: providerOrder.map(getProviderLabel),
     configuredProviders: configuredProviders.map(getProviderLabel),
-    imageProviderOrder: imageProviderOrder.map(getImageProviderLabel),
-    configuredImageProviders: configuredImageProviders.map(getImageProviderLabel),
     textAiConfigured: isTextAiConfigured(),
-    imageConfigured: isImageGenerationConfigured(),
     translationFallback: 'MyMemory public translation',
     historyUsers: conversations.size
   };
@@ -727,15 +494,10 @@ module.exports = {
   translateWithMyMemory,
   translateWithMyMemoryRaw,
   generateText,
-  generateImage,
-  createImageGenerationPayload,
   getStatus,
   normalizeProviderList,
   detectTranslationPair,
   getRequestedProviderOrder,
   getConfiguredProviderOrder,
-  getRequestedImageProviderOrder,
-  getConfiguredImageProviderOrder,
-  isTextAiConfigured,
-  isImageGenerationConfigured
+  isTextAiConfigured
 };

@@ -14,6 +14,8 @@ const scamCheck = require('../utils/scamCheck');
 const weather = require('../utils/weather');
 const line = require('../utils/line');
 const earthquakeWarnings = require('../utils/earthquakeWarnings');
+const speech = require('../utils/speech');
+const writing = require('../utils/writing');
 const axios = require('axios');
 
 function assertIncludes(value, expected) {
@@ -302,31 +304,15 @@ function testAiStatusIsInspectable() {
   assert.strictEqual(typeof status.provider, 'string');
   assert(Array.isArray(status.providerOrder));
   assert(Array.isArray(status.configuredProviders));
-  assert(Array.isArray(status.imageProviderOrder));
-  assert(Array.isArray(status.configuredImageProviders));
   assert.strictEqual(typeof status.textAiConfigured, 'boolean');
-  assert.strictEqual(typeof status.imageConfigured, 'boolean');
   assert.strictEqual(status.translationFallback, 'MyMemory public translation');
   assert.strictEqual(typeof status.historyUsers, 'number');
   assert.strictEqual(typeof ai.isTextAiConfigured(), 'boolean');
-  assert.strictEqual(typeof ai.isImageGenerationConfigured(), 'boolean');
-  assert.strictEqual(ai.isImageGenerationConfigured(), true);
   assert.deepStrictEqual(ai.normalizeProviderList('gemini, groq, gemini, openrouter'), ['gemini', 'groq', 'openrouter']);
   assert(Array.isArray(ai.getRequestedProviderOrder()));
   assert(Array.isArray(ai.getConfiguredProviderOrder()));
-  assert(Array.isArray(ai.getRequestedImageProviderOrder()));
-  assert(Array.isArray(ai.getConfiguredImageProviderOrder()));
-
-  const imagePayload = ai.createImageGenerationPayload('ภาพทดสอบ');
-  assert.strictEqual(imagePayload.prompt, 'ภาพทดสอบ');
-  assert.strictEqual(imagePayload.size, '1024x1024');
-
-  const portraitPayload = ai.createImageGenerationPayload('ภาพทดสอบ', { size: '1024x1536' });
-  assert.strictEqual(portraitPayload.size, '1024x1536');
-
-  if (!/^dall-e-/i.test(imagePayload.model)) {
-    assert.strictEqual(imagePayload.response_format, undefined);
-  }
+  assert.strictEqual(typeof speech.createSpeechDraft, 'function');
+  assert.strictEqual(typeof writing.createArticle, 'function');
 }
 
 async function testTranslationCommandPrefersDirectTranslation() {
@@ -449,7 +435,8 @@ function testManualIncludesCoreSlashCommands() {
     '/พรุ่งนี้',
     '/สัปดาห์นี้',
     '/เดือนนี้',
-    '/สร้างภาพ',
+    '/บทความ',
+    '/สุนทรพจน์',
     '/คำถาม',
     '/คำถามอื่น',
     '/แปลภาษา',

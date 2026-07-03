@@ -34,6 +34,26 @@ function normalizeMessages(message) {
   return [message];
 }
 
+function createTextMessages(text, maxLength = 4500) {
+  let remaining = String(text || '').trim();
+  const messages = [];
+
+  while (remaining) {
+    let splitAt = Math.min(maxLength, remaining.length);
+    if (remaining.length > maxLength) {
+      const paragraphBreak = remaining.lastIndexOf('\n', maxLength);
+      if (paragraphBreak >= Math.floor(maxLength * 0.6)) {
+        splitAt = paragraphBreak;
+      }
+    }
+
+    messages.push({ type: 'text', text: remaining.slice(0, splitAt).trim() });
+    remaining = remaining.slice(splitAt).trim();
+  }
+
+  return messages.slice(0, 5);
+}
+
 function replyMessage(replyToken, message) {
   validateLineAccessToken();
   return client.replyMessage({
@@ -286,5 +306,6 @@ module.exports = {
   sendMessage,
   sendAppointmentReminder,
   sendMorningGreeting,
+  createTextMessages,
   buildTodoMorningText
 };

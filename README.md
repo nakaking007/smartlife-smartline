@@ -116,13 +116,14 @@ http://localhost:3000/appointments-panel
 | `/พรุ่งนี้` | แสดงนัดหมายพรุ่งนี้ |
 | `/สัปดาห์นี้` | แสดงนัดหมายสัปดาห์นี้ |
 | `/เดือนนี้` | แสดงนัดหมายเดือนนี้ |
-| `/สร้างภาพ` | ถามรายละเอียดภาพ รับภาพต้นฉบับ เขียนพร้อมท์ภาษาไทยขนาด 1:1 ให้ตรวจ แล้วจึงสร้างพร้อมปุ่มดาวน์โหลด |
 | `/คำถาม`, `/คำถามอื่น` | เข้าโหมดถามตอบ AI ด้วย provider ฟรี/สำรองที่ตั้งค่าไว้ |
+| `/บทความ <หัวข้อ>` | เขียนบทความภาษาไทยระดับมืออาชีพด้วย AI |
+| `/สุนทรพจน์ <งานและโอกาส>` | เขียนสุนทรพจน์ภาษาไทยสละสลวยด้วย AI |
 | `/แปลภาษา` | เข้าโหมดแปลไทยเป็นอังกฤษ หรืออังกฤษเป็นไทย |
 | `/สมัคร` | เปิดฟอร์มสมัคร พร้อมข้อมูลแพ็กเกจและช่องทางโอนจ่ายตามที่ตั้งค่าไว้ |
 | `/ปลดลอค` | แสดงแพ็กเกจ ฟรี/Plus/VIP และคำสั่งแอดมินปลดล็อก |
 | `/บริการฉุกเฉิน` | รวมเบอร์ช่วยเหลือประชาชนและหน่วยงานสำคัญ เช่น 191, 1669, 199, 1784, 1418 |
-| `/ตรวจเช็ค` | ตรวจสถานะคำสั่ง LINE, AI, สร้างภาพ, ฟอร์ม และค่าที่ต้องตั้งเพิ่ม |
+| `/ตรวจเช็ค` | ตรวจสถานะคำสั่ง LINE, AI และฟอร์ม |
 
 ลิงก์ฟอร์มแยก:
 
@@ -418,7 +419,8 @@ GET /health
 ```text
 สถานะ AI
 แปล วันนี้ฉันมีประชุมตอน 15.00 น.
-สร้างภาพ ภาพคนเมืองตรวจฝุ่นก่อนออกจากบ้าน สไตล์อินโฟกราฟิก
+บทความ การเรียนรู้ตลอดชีวิต
+สุนทรพจน์ กล่าวเปิดการอบรมครู
 ```
 
 การตั้งค่าใน `.env`:
@@ -437,18 +439,11 @@ OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=openrouter/free
 HF_TOKEN=...
 HF_MODEL=deepseek-ai/DeepSeek-V3-0324
-HF_IMAGE_MODEL=black-forest-labs/FLUX.1-dev
 POLLINATIONS_API_KEY=...
 POLLINATIONS_TEXT_MODEL=openai
-POLLINATIONS_IMAGE_MODEL=flux
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 
-# สร้างภาพใน LINE ต้องมี URL สาธารณะ HTTPS ให้ LINE โหลดรูปได้
-IMAGE_PROVIDER=pollinations
-IMAGE_FALLBACK_PROVIDERS=pollinations,openai,huggingface
-OPENAI_API_KEY=...
-OPENAI_IMAGE_MODEL=gpt-image-1-mini
 PUBLIC_BASE_URL=https://your-public-domain.example.com
 LIFF_ID=your_liff_id
 ```
@@ -459,11 +454,8 @@ LIFF_ID=your_liff_id
 - ถ้าต้องการลองรุ่นใหม่ของ Gemini ให้เปลี่ยน `GEMINI_MODEL` เป็นรุ่น preview ที่บัญชีรองรับ เช่น `gemini-3-flash-preview`; ถ้าเน้นเสถียรให้ใช้ `gemini-2.5-flash`
 - `Groq` เหมาะเมื่ออยากได้คำตอบเร็วและมี free plan แต่ต้องดู rate limit ของบัญชีจริง
 - `OpenRouter` ตั้ง `OPENROUTER_MODEL=openrouter/free` เพื่อให้ OpenRouter เลือกโมเดลฟรีที่ยังใช้ได้ให้อัตโนมัติ
-- `Pollinations` ใช้ key ฟรีจาก `https://enter.pollinations.ai` และ key เดียวใช้ได้ทั้งแชตกับสร้างภาพ
+- `Pollinations Text` ใช้เป็น AI สำรองฟรีได้ แม้ไม่มี key โดยมีข้อจำกัดคิวสาธารณะ
 - `Ollama` เหมาะเมื่ออยากรันฟรีในเครื่อง ไม่ส่งข้อความออกนอกเครื่อง แต่ต้องมีเครื่องที่แรงพอ และควรเพิ่ม `ollama` ใน `AI_FALLBACK_PROVIDERS` เฉพาะตอนเปิด Ollama แล้ว
 - `Hugging Face Inference Providers` เหมาะสำหรับทดลองหลายโมเดลและใช้ token เดียวผ่าน router ของ Hugging Face
-- `Hugging Face Image` เป็นทางเลือกสร้างภาพผ่าน free tier เมื่อมี `HF_TOKEN`, `HF_IMAGE_MODEL`, และ `PUBLIC_BASE_URL`
-- `OpenAI Images` ใช้เฉพาะสร้างภาพ ต้องมี key และ public HTTPS URL; ถ้าต้องการคุณภาพสูงกว่าค่าเริ่มต้นให้ตั้ง `OPENAI_IMAGE_MODEL=gpt-image-2`
 
 เมื่อใช้ `AI_PROVIDER=auto` ระบบจะลองตามลำดับใน `AI_FALLBACK_PROVIDERS` เฉพาะตัวที่ตั้งค่า key ครบ ถ้าตัวแรกหมดโควตา ล่ม หรือ timeout จะข้ามไปตัวถัดไปโดยอัตโนมัติ
-ค่าเริ่มต้นของระบบสร้างภาพใช้ `IMAGE_PROVIDER=pollinations` เพื่อให้ใช้งานได้แม้ยังไม่มี OpenAI หรือ Hugging Face key
