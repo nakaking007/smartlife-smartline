@@ -43,7 +43,12 @@ function getRequestedProviderOrder() {
   }
 
   if (provider === 'auto') {
-    return normalizeProviderList(config.aiFallbackProviders).filter(item => VALID_TEXT_PROVIDERS.includes(item));
+    const requested = normalizeProviderList(config.aiFallbackProviders)
+      .filter(item => VALID_TEXT_PROVIDERS.includes(item));
+    if (!requested.includes('pollinations')) {
+      requested.push('pollinations');
+    }
+    return requested;
   }
 
   return normalizeProviderList(provider).filter(item => VALID_TEXT_PROVIDERS.includes(item));
