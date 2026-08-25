@@ -398,6 +398,16 @@ function testTodoHelpers() {
   assertIncludes(morningText, 'วันนี้: ซื้อถ่านไฟฉาย');
 }
 
+function testLineRetryKeyIsStable() {
+  const first = line.createRetryKey('morning-report', '2026-07-11', 'U123');
+  const second = line.createRetryKey('morning-report', '2026-07-11', 'U123');
+  const other = line.createRetryKey('morning-report', '2026-07-12', 'U123');
+
+  assert.strictEqual(first, second);
+  assert.notStrictEqual(first, other);
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+}
+
 function testEarthquakeWarningEvaluation() {
   const evaluation = earthquakeWarnings.featureToEvaluation({
     id: 'test-quake',
@@ -473,6 +483,7 @@ async function run() {
   testLiveDisasterParsing();
   testFreeServicesText();
   testTodoHelpers();
+  testLineRetryKeyIsStable();
   testEarthquakeWarningEvaluation();
   testManualIncludesCoreSlashCommands();
   testKnowledgeHelpers();

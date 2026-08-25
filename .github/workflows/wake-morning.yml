@@ -11,5 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Check SmartLife health
+        run: curl --fail --silent --show-error --max-time 30 https://smartlife-smartline2.onrender.com/health
       - name: Run morning report and disaster catch-up
-        run: curl --fail --silent --show-error --retry 3 --retry-delay 15 --request POST https://smartlife-smartline2.onrender.com/cron/morning-catchup
+        run: curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 15 --retry-connrefused --request POST https://smartlife-smartline2.onrender.com/cron/morning-catchup

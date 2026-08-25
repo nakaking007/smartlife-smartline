@@ -1,5 +1,7 @@
 // utils/line.js
 const { messagingApi } = require('@line/bot-sdk');
+const axios = require('axios');
+const crypto = require('crypto');
 const config = require('../config');
 const { formatBangkokDateTime } = require('./time');
 const { formatHours } = require('./riskAssessment');
@@ -34,6 +36,19 @@ function normalizeMessages(message) {
   return [message];
 }
 
+function createRetryKey(...parts) {
+  const hash = crypto
+    .createHash('sha256')
+    .update(parts.map(part => String(part || '')).join(':'))
+    .digest();
+
+  hash[6] = (hash[6] & 0x0f) | 0x40;
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+
+  const hex = hash.subarray(0, 16).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 function createTextMessages(text, maxLength = 4500) {
   let remaining = String(text || '').trim();
   const messages = [];
@@ -66,11 +81,40 @@ function reply(replyToken, text) {
   return replyMessage(replyToken, text);
 }
 
-function pushMessage(message) {
-  validateLinePushConfig();
-  return client.pushMessage({
-    to: config.lineUserId,
+async function pushMessage(message, to, options = {}) {
+  validateLineAccessToken();
+  const recipient = to || config.lineUserId;
+
+  if (!recipient) {
+    throw new Error('LINE recipient is not configured');
+  }
+
+  const payload = {
+    to: recipient,
     messages: normalizeMessages(message)
+  };
+
+  if (options.retryKey) {
+    try {
+      return await axios.post('https://api.line.me/v2/bot/message/push', payload, {
+        headers: {
+          Authorization: `Bearer ${config.lineAccessToken}`,
+          'Content-Type': 'application/json',
+          'X-Line-Retry-Key': options.retryKey
+        }
+      });
+    } catch (err) {
+      if (err.response && err.response.status === 409) {
+        return { duplicate: true, retryKey: options.retryKey };
+      }
+
+      throw err;
+    }
+  }
+
+  return client.pushMessage({
+    to: recipient,
+    messages: payload.messages
   });
 }
 
@@ -92,6 +136,7 @@ async function sendMessage(text) {
 }
 
 async function sendAppointmentReminder(eventId, summary, time, details = {}) {
+  const to = details.to || details.lineUserId;
   const bodyContents = [
     { type: "text", text: `📅 นัดหมาย: ${summary}`, weight: "bold", size: "md", wrap: true },
     { type: "text", text: `🕒 เวลา: ${time}`, size: "sm", color: "#555555", wrap: true }
@@ -160,7 +205,7 @@ async function sendAppointmentReminder(eventId, summary, time, details = {}) {
         ]
       }
     }
-  });
+  }, to);
 }
 
 function buildAppointmentFlexMessages(events) {
@@ -260,7 +305,7 @@ function buildTodoMorningText(todoSummary = {}) {
   return lines.join('\n');
 }
 
-async function sendMorningGreeting(weather, events, todoSummary = {}) {
+async function sendMorningGreeting(weather, events, todoSummary = {}, to, options = {}) {
   let eventText = "📋 ตารางงานวันนี้:\n";
 
   if (events.length === 0) {
@@ -292,13 +337,17 @@ ${weather.healthAdvice || 'วันนี้ยังไม่มีคำแ�
 ที่มา: ${weather.source || 'แหล่งข้อมูลอากาศ'} เวลา ${formatBangkokDateTime(weather.observedAt)}
 ขอให้นายท่านเดินทางโดยปลอดภัยนะคะ`;
 
-  return pushMessage([
-    { type: 'text', text: message },
-    ...buildAppointmentFlexMessages(events)
-  ]);
+  const messages = [{ type: 'text', text: message }];
+
+  if (options.includeAppointmentCards) {
+    messages.push(...buildAppointmentFlexMessages(events));
+  }
+
+  return pushMessage(messages, to, options);
 }
 
 module.exports = {
+  createRetryKey,
   reply,
   replyMessage,
   pushMessage,

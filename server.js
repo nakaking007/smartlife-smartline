@@ -105,8 +105,8 @@ app.post('/cron/morning-catchup', async (req, res) => {
   }, {});
   const bangkokMinutes = bangkokParts.hour * 60 + bangkokParts.minute;
 
-  if (bangkokMinutes < 5 * 60 + 55 || bangkokMinutes >= 12 * 60) {
-    res.status(403).json({ error: 'Morning catch-up is available from 05:55 to 11:59 Asia/Bangkok' });
+  if (bangkokMinutes < 6 * 60 + 1 || bangkokMinutes >= 12 * 60) {
+    res.status(403).json({ error: 'Morning catch-up is available from 06:01 to 11:59 Asia/Bangkok' });
     return;
   }
 

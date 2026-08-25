@@ -8,6 +8,8 @@ services:
     healthCheckPath: /health
     autoDeploy: false
     envVars:
+      - key: NODE_VERSION
+        value: 22
       - key: TZ
         value: Asia/Bangkok
       - key: MONGODB_URI

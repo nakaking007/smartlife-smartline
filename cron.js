@@ -12,12 +12,14 @@ const alerts = require('./utils/alerts');
 const liveDisasters = require('./utils/liveDisasters');
 const earthquakeWarnings = require('./utils/earthquakeWarnings');
 const line = require('./utils/line');
+const lineRecipient = require('./utils/lineRecipient');
 const { THAILAND_TIME_ZONE, formatBangkokDateTime, formatBangkokTime, getBangkokDateKey } = require('./utils/time');
 
 const LIVE_DISASTER_SYNC_INTERVAL_MS = 2 * 60 * 1000;
 const MORNING_REPORT_JOB = 'morning-report';
 const BEDTIME_TODO_PROMPT_JOB = 'bedtime-todo-prompt';
 const MORNING_REPORT_CATCH_UP_END_HOUR = 12;
+const CRON_RUN_LOCK_TIMEOUT_MS = 30 * 60 * 1000;
 let lastLiveDisasterSyncAt = 0;
 const morningReportInFlight = new Set();
 
@@ -76,50 +78,68 @@ function buildHealthAdvice(report) {
   ].filter(Boolean).join("\n");
 }
 
-async function sendMorningReport() {
+async function getActiveLineRecipients() {
+  const recipients = await lineRecipient.listActiveLineRecipients();
+  return recipients.filter(Boolean);
+}
+
+function getItemRecipient(item) {
+  return item && (item.lineUserId || config.lineUserId);
+}
+
+async function sendMorningReport(baseDate = new Date()) {
   try {
+    const dateKey = getBangkokDateKey(baseDate);
     const report = await getWeatherReport();
-    const appointmentsToday = await appointments.getToday();
-    const todosToday = await todos.getToday();
-    const events = appointmentsToday.map(item => ({
-      eventId: item._id,
-      summary: item.title || '-',
-      start: formatBangkokTime(item.startAt),
-      locationName: item.locationName || '-'
-    }));
-    const todoSummary = {
-      today: todosToday.map(item => ({
-        id: item._id,
-        title: item.title || '-',
-        dueAt: item.dueAt,
-        responsible: item.responsible,
-        priority: item.priority || 'normal'
-      })),
-      overdue: []
-    };
+    const recipients = await getActiveLineRecipients();
+    let sentCount = 0;
 
-    await line.sendMorningGreeting({
-      tempMax: report.tempMax,
-      heatIndex: report.heatIndex,
-      tempAssessment: report.tempAssessment,
-      heatIndexAssessment: report.heatIndexAssessment,
-      rainChance: report.rainChance,
-      rainChanceAssessment: report.rainChanceAssessment,
-      rainMm1h: report.rainMm1h,
-      rainAmountAssessment: report.rainAmountAssessment,
-      nextRainAt: report.nextRainAt,
-      nextRainInHours: report.nextRainInHours,
-      nextRainMm3h: report.nextRainMm3h,
-      nextRainAssessment: report.nextRainAssessment,
-      pm25: report.pm25,
-      pm25Assessment: report.pm25Assessment,
-      healthAdvice: buildHealthAdvice(report),
-      source: report.source,
-      observedAt: report.observedAt
-    }, events, todoSummary);
+    for (const recipient of recipients) {
+      const appointmentsToday = await appointments.getToday(baseDate, { lineUserId: recipient });
+      const todosToday = await todos.getToday(baseDate, { lineUserId: recipient });
+      const events = appointmentsToday.map(item => ({
+        eventId: item._id,
+        summary: item.title || '-',
+        start: formatBangkokTime(item.startAt),
+        locationName: item.locationName || '-'
+      }));
+      const todoSummary = {
+        today: todosToday.map(item => ({
+          id: item._id,
+          title: item.title || '-',
+          dueAt: item.dueAt,
+          responsible: item.responsible,
+          priority: item.priority || 'normal'
+        })),
+        overdue: []
+      };
 
-    await sendMorningActiveAlerts();
-    return true;
+      await line.sendMorningGreeting({
+        tempMax: report.tempMax,
+        heatIndex: report.heatIndex,
+        tempAssessment: report.tempAssessment,
+        heatIndexAssessment: report.heatIndexAssessment,
+        rainChance: report.rainChance,
+        rainChanceAssessment: report.rainChanceAssessment,
+        rainMm1h: report.rainMm1h,
+        rainAmountAssessment: report.rainAmountAssessment,
+        nextRainAt: report.nextRainAt,
+        nextRainInHours: report.nextRainInHours,
+        nextRainMm3h: report.nextRainMm3h,
+        nextRainAssessment: report.nextRainAssessment,
+        pm25: report.pm25,
+        pm25Assessment: report.pm25Assessment,
+        healthAdvice: buildHealthAdvice(report),
+        source: report.source,
+        observedAt: report.observedAt
+      }, events, todoSummary, recipient, {
+        retryKey: line.createRetryKey(MORNING_REPORT_JOB, dateKey, recipient)
+      });
+      sentCount += 1;
+    }
+
+    await sendMorningActiveAlerts(recipients);
+    return sentCount > 0;
   } catch (err) {
     console.error("SmartLife cron error:", err);
     return false;
@@ -127,44 +147,58 @@ async function sendMorningReport() {
 }
 
 async function sendBedtimeTodoPrompt(baseDate = new Date()) {
-  try {
-    const dateKey = getBangkokDateKey(baseDate);
+  const dateKey = getBangkokDateKey(baseDate);
+  let claimed = false;
 
-    if (await hasCronRunSent(BEDTIME_TODO_PROMPT_JOB, dateKey)) {
+  try {
+    claimed = await claimCronRun(BEDTIME_TODO_PROMPT_JOB, dateKey, baseDate);
+    if (!claimed) {
       return false;
     }
 
-    await line.pushMessage([
+    const message = [
       'เรียน นายท่าน ก่อนพักผ่อนคืนนี้ จะลงบันทึก To-do สำหรับพรุ่งนี้หรือสัปดาห์นี้ไหมคะ',
       '',
       'พิมพ์ตัวอย่าง:',
       'เพิ่มงาน | ชื่องาน | 28-06-2569 : 17.00 น. | ผู้รับผิดชอบ | high | หมายเหตุ',
       '',
       'ดูงาน: งานวันนี้ / งานสัปดาห์นี้ / งานค้าง'
-    ].join('\n'));
+    ].join('\n');
+    const recipients = await getActiveLineRecipients();
+    for (const recipient of recipients) {
+      await line.pushMessage(message, recipient);
+    }
     await markCronRunSent(BEDTIME_TODO_PROMPT_JOB, dateKey);
     return true;
   } catch (err) {
     console.error("SmartLife bedtime todo prompt error:", err.message);
+    if (claimed) {
+      await markCronRunFailed(BEDTIME_TODO_PROMPT_JOB, dateKey, err);
+    }
+
     return false;
   }
 }
 
-async function sendMorningActiveAlerts() {
+async function sendMorningActiveAlerts(recipients = null) {
   try {
-    if (!config.lineUserId) {
+    const targetRecipients = recipients || await getActiveLineRecipients();
+    if (!targetRecipients.length) {
       return 0;
     }
 
     await syncLiveDisasterAlerts({ force: true });
 
-    const activeAlerts = await alerts.listUnsentUrgentAlerts(config.lineUserId, new Date());
     let sentCount = 0;
 
-    for (const alert of activeAlerts) {
-      await line.pushMessage(alerts.formatAlert(alert));
-      await alerts.markAlertSent(alert._id, config.lineUserId);
-      sentCount += 1;
+    for (const recipient of targetRecipients) {
+      const activeAlerts = await alerts.listUnsentUrgentAlerts(recipient, new Date());
+
+      for (const alert of activeAlerts) {
+        await line.pushMessage(alerts.formatAlert(alert), recipient);
+        await alerts.markAlertSent(alert._id, recipient);
+        sentCount += 1;
+      }
     }
 
     return sentCount;
@@ -197,12 +231,17 @@ function getBangkokClockParts(baseDate = new Date()) {
 }
 
 function isMorningReportCatchUpWindow(baseDate = new Date()) {
-  const { hour } = getBangkokClockParts(baseDate);
-  return hour >= 6 && hour < MORNING_REPORT_CATCH_UP_END_HOUR;
+  const { hour, minute } = getBangkokClockParts(baseDate);
+  const isAfterDailyCronMinute = hour > 6 || (hour === 6 && minute > 0);
+  return isAfterDailyCronMinute && hour < MORNING_REPORT_CATCH_UP_END_HOUR;
 }
 
 function getCronRunCollection() {
   return mongoose.connection.collection('cron_runs');
+}
+
+function getCronRunId(job, dateKey) {
+  return `${job}:${dateKey}`;
 }
 
 async function hasMorningReportSent(dateKey) {
@@ -215,12 +254,68 @@ async function hasCronRunSent(job, dateKey) {
   }
 
   const existing = await getCronRunCollection().findOne({
-    job,
-    dateKey,
-    status: 'success'
+    status: 'success',
+    $or: [
+      { _id: getCronRunId(job, dateKey) },
+      { job, dateKey }
+    ]
   });
 
   return Boolean(existing);
+}
+
+function isDuplicateKeyError(err) {
+  return err && (err.code === 11000 || err.codeName === 'DuplicateKey');
+}
+
+async function claimCronRun(job, dateKey, baseDate = new Date()) {
+  if (mongoose.connection.readyState !== 1) {
+    return false;
+  }
+
+  if (await hasCronRunSent(job, dateKey)) {
+    return false;
+  }
+
+  const now = new Date(baseDate);
+  const lockExpiresAt = new Date(now.getTime() + CRON_RUN_LOCK_TIMEOUT_MS);
+
+  try {
+    const result = await getCronRunCollection().findOneAndUpdate(
+      {
+        _id: getCronRunId(job, dateKey),
+        $or: [
+          { status: { $exists: false } },
+          { status: { $nin: ['success', 'running'] } },
+          { status: 'running', lockExpiresAt: { $lte: now } }
+        ]
+      },
+      {
+        $set: {
+          job,
+          dateKey,
+          status: 'running',
+          lockExpiresAt,
+          updatedAt: now
+        },
+        $setOnInsert: {
+          createdAt: now
+        }
+      },
+      {
+        upsert: true,
+        returnDocument: 'after'
+      }
+    );
+
+    return Boolean(result && (result.value || result._id));
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      return false;
+    }
+
+    throw err;
+  }
 }
 
 async function markMorningReportSent(dateKey) {
@@ -234,13 +329,39 @@ async function markCronRunSent(job, dateKey) {
 
   const now = new Date();
   await getCronRunCollection().updateOne(
-    { job, dateKey },
+    { _id: getCronRunId(job, dateKey) },
     {
       $set: {
         job,
         dateKey,
         status: 'success',
         sentAt: now,
+        lockExpiresAt: null,
+        updatedAt: now
+      },
+      $setOnInsert: {
+        createdAt: now
+      }
+    },
+    { upsert: true }
+  );
+}
+
+async function markCronRunFailed(job, dateKey, err) {
+  if (mongoose.connection.readyState !== 1) {
+    return;
+  }
+
+  const now = new Date();
+  await getCronRunCollection().updateOne(
+    { _id: getCronRunId(job, dateKey) },
+    {
+      $set: {
+        job,
+        dateKey,
+        status: 'failed',
+        lastError: err ? String(err.message || err).slice(0, 500) : null,
+        lockExpiresAt: null,
         updatedAt: now
       },
       $setOnInsert: {
@@ -258,19 +379,28 @@ async function sendDailyMorningReport(baseDate = new Date()) {
     return false;
   }
 
-  if (await hasMorningReportSent(dateKey)) {
-    return false;
-  }
-
   morningReportInFlight.add(dateKey);
+  let claimed = false;
   try {
-    const sent = await sendMorningReport();
+    claimed = await claimCronRun(MORNING_REPORT_JOB, dateKey, baseDate);
+    if (!claimed) {
+      return false;
+    }
+
+    const sent = await sendMorningReport(baseDate);
     if (!sent) {
+      await markCronRunFailed(MORNING_REPORT_JOB, dateKey, new Error('Morning report send failed'));
       return false;
     }
 
     await markMorningReportSent(dateKey);
     return true;
+  } catch (err) {
+    if (claimed) {
+      await markCronRunFailed(MORNING_REPORT_JOB, dateKey, err);
+    }
+
+    throw err;
   } finally {
     morningReportInFlight.delete(dateKey);
   }
@@ -340,6 +470,11 @@ async function sendDueAppointmentReminders() {
     const dueItems = await appointments.findDueReminders();
 
     for (const item of dueItems) {
+      const recipient = getItemRecipient(item.appointment);
+      if (!recipient) {
+        continue;
+      }
+
       for (const reminder of item.reminders) {
         await line.sendAppointmentReminder(
           item.appointment._id,
@@ -351,7 +486,8 @@ async function sendDueAppointmentReminders() {
             dressCode: item.appointment.dressCode,
             contactName: item.appointment.contactName,
             contactPhone: item.appointment.contactPhone,
-            contactLineId: item.appointment.contactLineId
+            contactLineId: item.appointment.contactLineId,
+            to: recipient
           }
         );
         await appointments.markReminderSent(item.appointment, reminder.minutesBefore);
@@ -367,6 +503,11 @@ async function sendDueTodoReminders() {
     const reminderItems = await todos.findDueTodoReminders();
 
     for (const todo of reminderItems) {
+      const recipient = getItemRecipient(todo);
+      if (!recipient) {
+        continue;
+      }
+
       await line.pushMessage([
         'เรียน นายท่าน ใกล้ถึงเวลากำหนดเสร็จงานค่ะ',
         '',
@@ -376,13 +517,18 @@ async function sendDueTodoReminders() {
         '',
         'ถ้าเสร็จแล้วพิมพ์ งานเสร็จ <ID> ค่ะ',
         `ID: ${todo._id}`
-      ].filter(Boolean).join('\n'));
+      ].filter(Boolean).join('\n'), recipient);
       await todos.markTodoReminderSent(todo);
     }
 
     const dueItems = await todos.findDueTodoPrompts();
 
     for (const todo of dueItems) {
+      const recipient = getItemRecipient(todo);
+      if (!recipient) {
+        continue;
+      }
+
       await line.pushMessage([
         'เรียน นายท่าน ถึงเวลากำหนดส่งงานแล้วค่ะ',
         '',
@@ -392,7 +538,7 @@ async function sendDueTodoReminders() {
         '',
         'งานนี้ส่งรายงานเสร็จหรือยังคะ ถ้าเสร็จแล้วพิมพ์ งานเสร็จ <ID> ค่ะ',
         `ID: ${todo._id}`
-      ].filter(Boolean).join('\n'));
+      ].filter(Boolean).join('\n'), recipient);
       await todos.markTodoDuePromptSent(todo);
     }
   } catch (err) {
@@ -402,15 +548,18 @@ async function sendDueTodoReminders() {
 
 async function sendUrgentAlerts() {
   try {
-    if (!config.lineUserId) {
+    const recipients = await getActiveLineRecipients();
+    if (!recipients.length) {
       return;
     }
 
-    const urgentAlerts = await alerts.listUnsentUrgentAlerts(config.lineUserId);
+    for (const recipient of recipients) {
+      const urgentAlerts = await alerts.listUnsentUrgentAlerts(recipient);
 
-    for (const alert of urgentAlerts) {
-      await line.pushMessage(alerts.formatAlert(alert));
-      await alerts.markAlertSent(alert._id, config.lineUserId);
+      for (const alert of urgentAlerts) {
+        await line.pushMessage(alerts.formatAlert(alert), recipient);
+        await alerts.markAlertSent(alert._id, recipient);
+      }
     }
   } catch (err) {
     console.error("SmartLife alert error:", err);
