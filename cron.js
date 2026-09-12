@@ -83,8 +83,14 @@ async function getActiveLineRecipients() {
   return recipients.filter(Boolean);
 }
 
+function maskLineUserId(userId) {
+  const text = String(userId || '');
+  return text.length > 8 ? `${text.slice(0, 2)}...${text.slice(-4)}` : '-';
+}
+
 function getItemRecipient(item) {
-  return item && (item.lineUserId || config.lineUserId);
+  const recipient = item && (item.lineUserId || config.lineUserId);
+  return lineRecipient.isValidLineUserId(recipient) ? String(recipient).trim() : null;
 }
 
 async function sendMorningReport(baseDate = new Date()) {
@@ -95,47 +101,52 @@ async function sendMorningReport(baseDate = new Date()) {
     let sentCount = 0;
 
     for (const recipient of recipients) {
-      const appointmentsToday = await appointments.getToday(baseDate, { lineUserId: recipient });
-      const todosToday = await todos.getToday(baseDate, { lineUserId: recipient });
-      const events = appointmentsToday.map(item => ({
-        eventId: item._id,
-        summary: item.title || '-',
-        start: formatBangkokTime(item.startAt),
-        locationName: item.locationName || '-'
-      }));
-      const todoSummary = {
-        today: todosToday.map(item => ({
-          id: item._id,
-          title: item.title || '-',
-          dueAt: item.dueAt,
-          responsible: item.responsible,
-          priority: item.priority || 'normal'
-        })),
-        overdue: []
-      };
+      try {
+        const appointmentsToday = await appointments.getToday(baseDate, { lineUserId: recipient });
+        const todosToday = await todos.getToday(baseDate, { lineUserId: recipient });
+        const events = appointmentsToday.map(item => ({
+          eventId: item._id,
+          summary: item.title || '-',
+          start: formatBangkokTime(item.startAt),
+          locationName: item.locationName || '-'
+        }));
+        const todoSummary = {
+          today: todosToday.map(item => ({
+            id: item._id,
+            title: item.title || '-',
+            dueAt: item.dueAt,
+            responsible: item.responsible,
+            priority: item.priority || 'normal'
+          })),
+          overdue: []
+        };
 
-      await line.sendMorningGreeting({
-        tempMax: report.tempMax,
-        heatIndex: report.heatIndex,
-        tempAssessment: report.tempAssessment,
-        heatIndexAssessment: report.heatIndexAssessment,
-        rainChance: report.rainChance,
-        rainChanceAssessment: report.rainChanceAssessment,
-        rainMm1h: report.rainMm1h,
-        rainAmountAssessment: report.rainAmountAssessment,
-        nextRainAt: report.nextRainAt,
-        nextRainInHours: report.nextRainInHours,
-        nextRainMm3h: report.nextRainMm3h,
-        nextRainAssessment: report.nextRainAssessment,
-        pm25: report.pm25,
-        pm25Assessment: report.pm25Assessment,
-        healthAdvice: buildHealthAdvice(report),
-        source: report.source,
-        observedAt: report.observedAt
-      }, events, todoSummary, recipient, {
-        retryKey: line.createRetryKey(MORNING_REPORT_JOB, dateKey, recipient)
-      });
-      sentCount += 1;
+        await line.sendMorningGreeting({
+          tempMax: report.tempMax,
+          heatIndex: report.heatIndex,
+          tempAssessment: report.tempAssessment,
+          heatIndexAssessment: report.heatIndexAssessment,
+          rainChance: report.rainChance,
+          rainChanceAssessment: report.rainChanceAssessment,
+          rainMm1h: report.rainMm1h,
+          rainAmountAssessment: report.rainAmountAssessment,
+          nextRainAt: report.nextRainAt,
+          nextRainInHours: report.nextRainInHours,
+          nextRainMm3h: report.nextRainMm3h,
+          nextRainAssessment: report.nextRainAssessment,
+          pm25: report.pm25,
+          pm25Assessment: report.pm25Assessment,
+          healthAdvice: buildHealthAdvice(report),
+          source: report.source,
+          observedAt: report.observedAt
+        }, events, todoSummary, recipient, {
+          retryKey: line.createRetryKey(MORNING_REPORT_JOB, dateKey, recipient)
+        });
+        sentCount += 1;
+      } catch (err) {
+        const status = err && err.response ? ` status ${err.response.status}` : '';
+        console.error(`SmartLife morning recipient error ${maskLineUserId(recipient)}${status}:`, err.message);
+      }
     }
 
     await sendMorningActiveAlerts(recipients);
