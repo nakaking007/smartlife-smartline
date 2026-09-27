@@ -30,7 +30,7 @@
         <div class="hero-copy">
           <p class="hero-date" id="heroDate">วันนี้</p>
           <h2 id="heroTitle">พร้อมดูแลทุกแผนของคุณ</h2>
-          <p>อากาศ นัดหมาย และภัยเตือนสำคัญในที่เดียว</p>
+          <p>อากาศ นัดหมาย และการเตือนภัยสำคัญในที่เดียว</p>
           <button class="hero-refresh" data-refresh type="button"><i data-lucide="refresh-cw"></i><span>อัปเดตข้อมูล</span></button>
         </div>
       </section>
@@ -38,7 +38,7 @@
       <div class="summary-grid">
         <button class="summary-tile" data-go="schedule"><i data-lucide="calendar-days"></i><strong id="appointmentCount">0</strong><span>นัดหมายวันนี้</span></button>
         <button class="summary-tile" data-go="schedule"><i data-lucide="list-checks"></i><strong id="todoCount">0</strong><span>งานวันนี้</span></button>
-        <button class="summary-tile alert-tile" data-go="alerts"><i data-lucide="triangle-alert"></i><strong id="alertCount">0</strong><span>ภัยเตือนที่ยังมีผล</span></button>
+        <button class="summary-tile alert-tile" data-go="alerts"><i data-lucide="triangle-alert"></i><strong id="alertCount">0</strong><span>เตือนภัยที่ยังมีผล</span></button>
       </div>
       <div class="content-block"><div class="block-title"><h3>กำหนดการถัดไป</h3><button class="text-button" data-go="schedule">ดูทั้งหมด</button></div><div id="todayAppointments" class="item-list"></div></div>
       <div class="content-block"><div class="block-title"><h3>ประกาศสำคัญ</h3><button class="text-button" data-go="alerts">ดูทั้งหมด</button></div><div id="todayAlerts" class="item-list"></div></div>
@@ -64,7 +64,7 @@
     </section>
 
     <section class="view" data-view="alerts">
-      <div class="section-heading"><div class="heading-icon alert"><i data-lucide="radio-tower"></i></div><div><p class="eyebrow">ประเทศไทยและอาเซียน</p><h2>ศูนย์ภัยเตือน</h2></div><button class="icon-button" data-refresh title="โหลดใหม่"><i data-lucide="refresh-cw"></i></button></div>
+      <div class="section-heading"><div class="heading-icon alert"><i data-lucide="radio-tower"></i></div><div><p class="eyebrow">ประเทศไทยและอาเซียน</p><h2>ศูนย์เตือนภัย</h2></div><button class="icon-button" data-refresh title="โหลดใหม่"><i data-lucide="refresh-cw"></i></button></div>
       <p class="notice">แสดงข้อมูลจากแหล่งทางการและเครือข่ายภัยพิบัติ โปรดเปิดประกาศต้นทางก่อนตัดสินใจ</p>
       <div id="alertList" class="item-list"></div>
     </section>
@@ -106,7 +106,7 @@
   <nav class="bottom-nav" aria-label="เมนูหลัก">
     <button class="active" data-nav="today"><i data-lucide="house"></i><span>วันนี้</span></button>
     <button data-nav="schedule"><i data-lucide="calendar-days"></i><span>นัดหมาย</span></button>
-    <button data-nav="alerts"><i data-lucide="triangle-alert"></i><span>ภัยเตือน</span></button>
+    <button data-nav="alerts" class="alert-nav"><i data-lucide="triangle-alert"></i><span>เตือนภัย</span></button>
     <button data-nav="help"><i data-lucide="phone-call"></i><span>ช่วยเหลือ</span></button>
     <button data-nav="guide"><i data-lucide="book-open"></i><span>คู่มือ</span></button>
   </nav>

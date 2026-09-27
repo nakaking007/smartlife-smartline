@@ -2019,7 +2019,10 @@ async function handleLineEvent(event) {
   if (eventUserId) await lineRecipient.rememberLineRecipient(eventUserId);
 
   if (event.type === 'follow') {
-    await line.reply(event.replyToken, 'ยินดีต้อนรับสู่ SmartLife ค่ะ พิมพ์ คู่มือ หรือกดเมนูด้านล่างเพื่อเริ่มใช้งาน');
+    await line.reply(
+      event.replyToken,
+      'ยินดีต้อนรับสู่ SmartLife ค่ะ ระบบได้รับการอัปเกรดแล้ว ใช้งานนัดหมาย การแจ้งเตือน และหน้า SmartLife ใหม่ได้จากเมนูด้านล่าง หรือพิมพ์ คู่มือ เพื่อดูคำสั่งทั้งหมดค่ะ'
+    );
     return true;
   }
   if (event.type === 'message' && event.message && event.message.type === 'text') return handleTextMessage(event);
