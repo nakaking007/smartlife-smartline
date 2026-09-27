@@ -25,7 +25,15 @@
     <div class="system-banner" id="systemBanner">กำลังเชื่อมต่อ LINE...</div>
 
     <section class="view active" data-view="today">
-      <div class="section-heading"><div><p class="eyebrow">ภาพรวมวันนี้</p><h2>เช็กทุกอย่างในที่เดียว</h2></div><button class="icon-button" data-refresh title="โหลดใหม่"><i data-lucide="refresh-cw"></i></button></div>
+      <section class="morning-hero" aria-labelledby="heroTitle">
+        <img src="/assets/smartlife-morning-hero.png" alt="ผู้ช่วย SmartLife สำหรับอากาศ นัดหมาย และความปลอดภัยในกรุงเทพฯ">
+        <div class="hero-copy">
+          <p class="hero-date" id="heroDate">วันนี้</p>
+          <h2 id="heroTitle">พร้อมดูแลทุกแผนของคุณ</h2>
+          <p>อากาศ นัดหมาย และภัยเตือนสำคัญในที่เดียว</p>
+          <button class="hero-refresh" data-refresh type="button"><i data-lucide="refresh-cw"></i><span>อัปเดตข้อมูล</span></button>
+        </div>
+      </section>
       <div class="weather-strip" id="weatherStrip"><span>กำลังโหลดอากาศ...</span></div>
       <div class="summary-grid">
         <button class="summary-tile" data-go="schedule"><i data-lucide="calendar-days"></i><strong id="appointmentCount">0</strong><span>นัดหมายวันนี้</span></button>
@@ -37,7 +45,7 @@
     </section>
 
     <section class="view" data-view="schedule">
-      <div class="section-heading"><div><p class="eyebrow">ส่วนตัวของคุณ</p><h2>นัดหมายและ To-do</h2></div></div>
+      <div class="section-heading"><div class="heading-icon"><i data-lucide="calendar-range"></i></div><div><p class="eyebrow">ส่วนตัวของคุณ</p><h2>นัดหมายและ To-do</h2></div></div>
       <div class="segmented" role="tablist"><button class="active" data-mode="appointments">นัดหมาย</button><button data-mode="todos">To-do</button></div>
       <form id="appointmentForm" class="editor-form">
         <input type="hidden" name="id">
@@ -56,19 +64,19 @@
     </section>
 
     <section class="view" data-view="alerts">
-      <div class="section-heading"><div><p class="eyebrow">ประเทศไทยและอาเซียน</p><h2>ศูนย์ภัยเตือน</h2></div><button class="icon-button" data-refresh title="โหลดใหม่"><i data-lucide="refresh-cw"></i></button></div>
+      <div class="section-heading"><div class="heading-icon alert"><i data-lucide="radio-tower"></i></div><div><p class="eyebrow">ประเทศไทยและอาเซียน</p><h2>ศูนย์ภัยเตือน</h2></div><button class="icon-button" data-refresh title="โหลดใหม่"><i data-lucide="refresh-cw"></i></button></div>
       <p class="notice">แสดงข้อมูลจากแหล่งทางการและเครือข่ายภัยพิบัติ โปรดเปิดประกาศต้นทางก่อนตัดสินใจ</p>
       <div id="alertList" class="item-list"></div>
     </section>
 
     <section class="view" data-view="help">
-      <div class="section-heading"><div><p class="eyebrow">แตะเพื่อโทร</p><h2>ขอความช่วยเหลือฉุกเฉิน</h2></div></div>
+      <div class="section-heading"><div class="heading-icon emergency"><i data-lucide="life-buoy"></i></div><div><p class="eyebrow">แตะเพื่อโทร</p><h2>ขอความช่วยเหลือฉุกเฉิน</h2></div></div>
       <div class="sos-band"><i data-lucide="siren"></i><div><strong>อันตรายต่อชีวิต</strong><span>โทร 191 หรือ 1669 ทันทีตามประเภทเหตุ</span></div></div>
       <div id="emergencyList"></div>
     </section>
 
     <section class="view" data-view="guide">
-      <div class="section-heading"><div><p class="eyebrow">ตั้งค่าและวิธีใช้</p><h2>คู่มือ SmartLife</h2></div></div>
+      <div class="section-heading"><div class="heading-icon guide"><i data-lucide="sparkles"></i></div><div><p class="eyebrow">ตั้งค่าและวิธีใช้</p><h2>คู่มือ SmartLife</h2></div></div>
       <form id="preferenceForm" class="editor-form">
         <label>จังหวัดที่ต้องการติดตาม<input name="province" maxlength="80" placeholder="เช่น กรุงเทพมหานคร"></label>
         <label class="toggle-row"><span>รายงานทุกเช้า 06:00</span><input type="checkbox" name="morningReport" checked></label>
