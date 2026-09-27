@@ -5,6 +5,34 @@ const { getBangkokDayRange, getBangkokWeekRange, parseBangkokDate } = require('.
 const DEFAULT_REMINDER_MINUTES = 60;
 const DUE_PROMPT_GRACE_MS = 2 * 60 * 60 * 1000;
 
+function normalizeLineUserId(value) {
+  return String(value || '').trim();
+}
+
+function buildLineUserCondition(lineUserId) {
+  const normalized = normalizeLineUserId(lineUserId);
+  if (!normalized) {
+    return null;
+  }
+  return { lineUserId: normalized };
+}
+
+function addAndCondition(query, condition) {
+  if (!condition) {
+    return;
+  }
+
+  if (!Array.isArray(query.$and)) {
+    query.$and = [];
+  }
+
+  query.$and.push(condition);
+}
+
+function addLineUserFilter(query, filters = {}) {
+  addAndCondition(query, buildLineUserCondition(filters.lineUserId, filters));
+}
+
 const EDITABLE_FIELDS = [
   'title',
   'dueAt',
@@ -13,8 +41,7 @@ const EDITABLE_FIELDS = [
   'notes',
   'responsible',
   'reminderMinutesBefore',
-  'status',
-  'lineUserId'
+  'status'
 ];
 
 function normalizeStatus(status) {
@@ -39,9 +66,7 @@ async function listTodos(filters = {}) {
     query.status = 'open';
   }
 
-  if (filters.lineUserId) {
-    query.lineUserId = filters.lineUserId;
-  }
+  addLineUserFilter(query, filters);
 
   if (filters.dueAtFrom || filters.dueAtTo) {
     query.dueAt = {};
@@ -58,8 +83,10 @@ async function createTodo(changes = {}) {
     throw new Error('Todo title is required');
   }
 
+  const lineUserId = normalizeLineUserId(changes.lineUserId || changes.userId);
   const todo = new Todo({
     ...changes,
+    lineUserId: lineUserId || undefined,
     title,
     dueAt: changes.dueAt ? parseBangkokDate(changes.dueAt) : undefined,
     responsible: changes.responsible || '',
@@ -79,12 +106,14 @@ async function createTodo(changes = {}) {
   return todo.save();
 }
 
-async function getTodo(id) {
+async function getTodo(id, filters = {}) {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new Error('Invalid todo id');
   }
 
-  const todo = await Todo.findById(id);
+  const query = { _id: id };
+  addLineUserFilter(query, filters);
+  const todo = await Todo.findOne(query);
   if (!todo || todo.status === 'deleted') {
     throw new Error('Todo not found');
   }
@@ -92,8 +121,8 @@ async function getTodo(id) {
   return todo;
 }
 
-async function updateTodo(id, changes = {}) {
-  const todo = await getTodo(id);
+async function updateTodo(id, changes = {}, filters = {}) {
+  const todo = await getTodo(id, filters);
 
   for (const field of EDITABLE_FIELDS) {
     if (changes[field] !== undefined) {
@@ -120,21 +149,22 @@ async function updateTodo(id, changes = {}) {
   return todo.save();
 }
 
-async function completeTodo(id) {
-  return updateTodo(id, { status: 'done' });
+async function completeTodo(id, filters = {}) {
+  return updateTodo(id, { status: 'done' }, filters);
 }
 
-async function reopenTodo(id) {
-  return updateTodo(id, { status: 'open' });
+async function reopenTodo(id, filters = {}) {
+  return updateTodo(id, { status: 'open' }, filters);
 }
 
-async function deleteTodo(id) {
-  return updateTodo(id, { status: 'deleted' });
+async function deleteTodo(id, filters = {}) {
+  return updateTodo(id, { status: 'deleted' }, filters);
 }
 
-async function getToday(baseDate = new Date()) {
+async function getToday(baseDate = new Date(), filters = {}) {
   const { end } = getBangkokDayRange(baseDate);
   return listTodos({
+    ...filters,
     openOnly: true,
     dueAtFrom: baseDate,
     dueAtTo: end,
@@ -142,18 +172,20 @@ async function getToday(baseDate = new Date()) {
   });
 }
 
-async function getOverdue(baseDate = new Date()) {
+async function getOverdue(baseDate = new Date(), filters = {}) {
   const { start } = getBangkokDayRange(baseDate);
   return listTodos({
+    ...filters,
     openOnly: true,
     dueAtTo: start,
     limit: 100
   });
 }
 
-async function getThisWeek(baseDate = new Date()) {
+async function getThisWeek(baseDate = new Date(), filters = {}) {
   const { start, end } = getBangkokWeekRange(baseDate);
   return listTodos({
+    ...filters,
     activeOnly: true,
     dueAtFrom: start,
     dueAtTo: end,

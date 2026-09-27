@@ -18,13 +18,21 @@ services:
         value: 8.8.8.8,1.1.1.1
       - key: LINE_ACCESS_TOKEN
         sync: false
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LINE_LOGIN_CHANNEL_ID
+        sync: false
       - key: LINE_USER_ID
         sync: false
+      - key: LINE_OFFICIAL_ACCOUNT_ID
+        value: "@426ovxwj"
       - key: WEATHER_API_KEY
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: LIFF_ID
+        sync: false
+      - key: CRON_SECRET
         sync: false
       - key: AI_PROVIDER
         value: auto

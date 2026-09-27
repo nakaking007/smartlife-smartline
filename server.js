@@ -4,7 +4,9 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
+const path = require('path');
 const config = require('./config');
+const { isValidLineSignature } = require('./middleware/lineWebhook');
 const { configureMongoDns } = require('./utils/mongoDns');
 const line = require('./utils/line');
 const tasks = require('./utils/tasks');
@@ -30,6 +32,7 @@ const userRoutes = require('./routes/userRoutes');
 const appointmentRoutes = require('./routes/appointments');
 const todoRoutes = require('./routes/todos');
 const earthquakeWarningRoutes = require('./routes/earthquakeWarnings');
+const appRoutes = require('./routes/app');
 const cronJobs = require('./cron');
 
 const app = express();
@@ -37,12 +40,28 @@ const port = Number(process.env.PORT) || 3000;
 const pendingAppointmentEdits = new Map();
 const pendingAppointmentLists = new Map();
 const pendingModes = new Map();
-app.use(bodyParser.json());
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self)');
+  next();
+});
+app.use(bodyParser.json({
+  verify(req, res, buffer) {
+    if (req.originalUrl === '/webhook' || req.originalUrl === '/webhooks/line') {
+      req.rawBody = Buffer.from(buffer);
+    }
+  }
+}));
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use('/assets', express.static(path.join(__dirname, 'public')));
 app.use('/users', userRoutes);
 app.use('/appointments', appointmentRoutes);
 app.use('/todos', todoRoutes);
 app.use('/earthquake-warnings', earthquakeWarningRoutes);
+app.use('/api', appRoutes);
 
 configureMongoDns();
 mongoose.connect(config.mongoUri, {
@@ -86,13 +105,21 @@ app.get('/health', (req, res) => {
     line: {
       accessTokenConfigured: Boolean(config.lineAccessToken),
       userIdConfigured: Boolean(config.lineUserId),
-      pushConfigured: Boolean(config.lineAccessToken && config.lineUserId)
+      pushConfigured: Boolean(config.lineAccessToken),
+      webhookSignatureConfigured: Boolean(config.lineChannelSecret),
+      liffConfigured: Boolean(config.liffId && config.lineLoginChannelId)
     },
     ai: ai.getStatus()
   });
 });
 
 app.post('/cron/morning-catchup', async (req, res) => {
+  if (!config.cronSecret) {
+    return res.status(503).json({ error: 'Scheduler security is not configured' });
+  }
+  if (req.headers.authorization !== `Bearer ${config.cronSecret}`) {
+    return res.status(401).json({ error: 'Unauthorized scheduler' });
+  }
   const bangkokParts = new Intl.DateTimeFormat('en-GB', {
     timeZone: THAILAND_TIME_ZONE,
     hour: '2-digit',
@@ -125,24 +152,32 @@ app.get('/ai/status', (req, res) => {
   res.json(ai.getStatus());
 });
 
+app.get('/api-config', (req, res) => {
+  res.json({
+    liffId: config.liffId || '',
+    officialAccountId: config.lineOfficialAccountId,
+    addFriendUrl: `https://line.me/R/ti/p/${encodeURIComponent(config.lineOfficialAccountId)}`
+  });
+});
+
 app.get('/appointments-panel', (req, res) => {
-  res.type('html').send(renderAppointmentsPanelPage());
+  res.redirect('/liff/calendar');
 });
 
 app.get('/forms', (req, res) => {
-  res.type('html').send(renderFormsIndexPage());
+  res.redirect('/liff/calendar');
 });
 
 app.get('/register-panel', (req, res) => {
-  res.type('html').send(renderRegisterPanelPage());
+  res.redirect('/liff/calendar');
 });
 
 app.get('/register-form', (req, res) => {
-  res.type('html').send(renderRegisterPanelPage());
+  res.redirect('/liff/calendar');
 });
 
 app.get('/appointment-form', (req, res) => {
-  res.type('html').send(renderAppointmentFormPage());
+  res.redirect('/liff/calendar');
 });
 
 app.get('/liff', (req, res) => {
@@ -150,7 +185,7 @@ app.get('/liff', (req, res) => {
 });
 
 app.get('/liff/calendar', (req, res) => {
-  res.type('html').send(renderLiffCalendarPage());
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 function formatBangkokDate(date) {
@@ -161,6 +196,11 @@ function getPublicUrl(routePath) {
   const normalizedPath = routePath.startsWith('/') ? routePath : `/${routePath}`;
   const baseUrl = config.publicBaseUrl || `http://localhost:${port}`;
   return `${String(baseUrl).replace(/\/+$/, '')}${normalizedPath}`;
+}
+
+function getCalendarUrl(userId) {
+  if (config.liffId) return `https://liff.line.me/${config.liffId}`;
+  return getPublicUrl('/liff/calendar');
 }
 
 function hasPublicUrl() {
@@ -182,1126 +222,6 @@ function getPendingMode(userId) {
   }
 
   return typeof mode === 'string' ? { type: mode } : mode;
-}
-
-function renderAppointmentsPanelPage() {
-  return `<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SmartLife นัดหมาย</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f7f8fb;
-      --panel: #ffffff;
-      --line: #d9dee8;
-      --text: #17202a;
-      --muted: #5f6b7a;
-      --green: #12805c;
-      --red: #b42318;
-      --blue: #1f5fbf;
-      --soft-blue: #eaf2ff;
-      font-family: "Segoe UI", Tahoma, sans-serif;
-    }
-
-    * { box-sizing: border-box; }
-
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-size: 15px;
-    }
-
-    header {
-      background: var(--panel);
-      border-bottom: 1px solid var(--line);
-      padding: 16px 20px;
-      position: sticky;
-      top: 0;
-      z-index: 2;
-    }
-
-    main {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 18px;
-    }
-
-    h1 {
-      font-size: 22px;
-      margin: 0 0 4px;
-    }
-
-    .sub {
-      color: var(--muted);
-      margin: 0;
-    }
-
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      justify-content: space-between;
-      margin: 14px 0;
-      flex-wrap: wrap;
-    }
-
-    .filters {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-
-    button {
-      border: 1px solid var(--line);
-      background: var(--panel);
-      color: var(--text);
-      border-radius: 6px;
-      padding: 8px 10px;
-      cursor: pointer;
-      font: inherit;
-      min-height: 38px;
-    }
-
-    button.primary {
-      background: var(--green);
-      border-color: var(--green);
-      color: #fff;
-    }
-
-    button.danger {
-      color: var(--red);
-      border-color: #f0b8b2;
-    }
-
-    input, select {
-      width: 100%;
-      min-height: 38px;
-      padding: 8px 9px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      font: inherit;
-      background: #fff;
-    }
-
-    .search {
-      min-width: 250px;
-      max-width: 360px;
-    }
-
-    .status {
-      color: var(--muted);
-      min-height: 22px;
-    }
-
-    .tableWrap {
-      overflow-x: auto;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 980px;
-    }
-
-    th, td {
-      text-align: left;
-      padding: 10px;
-      border-bottom: 1px solid var(--line);
-      vertical-align: top;
-    }
-
-    th {
-      background: #f1f4f8;
-      color: #344054;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    tr.editing {
-      background: var(--soft-blue);
-    }
-
-    .id {
-      font-size: 12px;
-      color: var(--muted);
-      word-break: break-all;
-      max-width: 150px;
-    }
-
-    .displayTime {
-      color: var(--blue);
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    .actions {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-      min-width: 185px;
-    }
-
-    .hidden { display: none; }
-
-    @media (max-width: 720px) {
-      header { position: static; }
-      main { padding: 12px; }
-      .search { min-width: 100%; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>แผงนัดหมาย SmartLife</h1>
-    <p class="sub">ทุกเวลาถูกอ่านและบันทึกเป็นเวลาไทย Asia/Bangkok แบบ 24 ชั่วโมง</p>
-  </header>
-  <main>
-    <div class="toolbar">
-      <div class="filters">
-        <button id="refreshBtn" type="button">รีเฟรช</button>
-        <label>
-          สถานะ
-          <select id="statusFilter">
-            <option value="active">ยังใช้งาน</option>
-            <option value="all">ทั้งหมดรวม deleted</option>
-            <option value="deleted">deleted</option>
-          </select>
-        </label>
-        <input id="searchInput" class="search" placeholder="ค้นหาชื่อ สถานที่ ID">
-      </div>
-      <div id="statusText" class="status"></div>
-    </div>
-    <div class="tableWrap">
-      <table>
-        <thead>
-          <tr>
-            <th>นัดหมาย</th>
-            <th>เวลาไทย</th>
-            <th>สถานที่</th>
-            <th>ชุด/เตรียมตัว</th>
-            <th>สถานะ</th>
-            <th>ID</th>
-            <th>จัดการ</th>
-          </tr>
-        </thead>
-        <tbody id="appointmentsBody"></tbody>
-      </table>
-    </div>
-  </main>
-  <script>
-    const state = { items: [], editingId: null };
-    const body = document.getElementById('appointmentsBody');
-    const statusText = document.getElementById('statusText');
-    const statusFilter = document.getElementById('statusFilter');
-    const searchInput = document.getElementById('searchInput');
-
-    function setStatus(text) {
-      statusText.textContent = text || '';
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, ch => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-      }[ch]));
-    }
-
-    function bangkokParts(dateValue) {
-      if (!dateValue) return null;
-      const date = new Date(dateValue);
-      if (Number.isNaN(date.getTime())) return null;
-      const parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/Bangkok',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-        hourCycle: 'h23'
-      }).formatToParts(date).reduce((acc, part) => {
-        if (part.type !== 'literal') acc[part.type] = part.value;
-        return acc;
-      }, {});
-      return parts;
-    }
-
-    function toDatetimeLocalValue(dateValue) {
-      const parts = bangkokParts(dateValue);
-      if (!parts) return '';
-      return parts.year + '-' + parts.month + '-' + parts.day + 'T' + parts.hour + ':' + parts.minute;
-    }
-
-    function formatBangkok(dateValue) {
-      const parts = bangkokParts(dateValue);
-      if (!parts) return '-';
-      return parts.day + '/' + parts.month + '/' + parts.year + ' ' + parts.hour + '.' + parts.minute + ' น.';
-    }
-
-    function shouldShow(item) {
-      const mode = statusFilter.value;
-      if (mode === 'active' && item.status === 'deleted') return false;
-      if (mode === 'deleted' && item.status !== 'deleted') return false;
-      const query = searchInput.value.trim().toLowerCase();
-      if (!query) return true;
-      return [item.title, item.locationName, item.dressCode, item.preparation, item.status, item._id]
-        .some(value => String(value || '').toLowerCase().includes(query));
-    }
-
-    function render() {
-      const rows = state.items.filter(shouldShow);
-      if (rows.length === 0) {
-        body.innerHTML = '<tr><td colspan="7">ไม่พบนัดหมาย</td></tr>';
-        return;
-      }
-
-      body.innerHTML = rows.map(item => {
-        const editing = state.editingId === item._id;
-        const disabled = item.status === 'deleted' ? 'disabled' : '';
-        const editClass = editing ? 'editing' : '';
-        return '<tr class="' + editClass + '" data-id="' + escapeHtml(item._id) + '">' +
-          '<td>' + (editing
-            ? '<input data-field="title" value="' + escapeHtml(item.title || '') + '">'
-            : '<strong>' + escapeHtml(item.title || '-') + '</strong>') + '</td>' +
-          '<td>' + (editing
-            ? '<input data-field="startAt" type="datetime-local" value="' + escapeHtml(toDatetimeLocalValue(item.startAt)) + '"><div class="id">บันทึกเป็นเวลาไทย</div>'
-            : '<span class="displayTime">' + escapeHtml(formatBangkok(item.startAt)) + '</span>') + '</td>' +
-          '<td>' + (editing
-            ? '<input data-field="locationName" value="' + escapeHtml(item.locationName || '') + '">'
-            : escapeHtml(item.locationName || '-')) + '</td>' +
-          '<td>' + (editing
-            ? '<input data-field="dressCode" value="' + escapeHtml(item.dressCode || '') + '">'
-            : escapeHtml(item.dressCode || item.preparation || '-')) + '</td>' +
-          '<td>' + escapeHtml(item.status || '-') + '</td>' +
-          '<td><div class="id">' + escapeHtml(item._id) + '</div></td>' +
-          '<td><div class="actions">' + (editing
-            ? '<button class="primary" data-action="save" ' + disabled + '>บันทึก</button><button data-action="cancel">ยกเลิก</button>'
-            : '<button data-action="edit" ' + disabled + '>แก้ไข</button><button class="danger" data-action="delete" ' + disabled + '>ลบ</button>') +
-          '</div></td>' +
-        '</tr>';
-      }).join('');
-    }
-
-    async function loadAppointments() {
-      setStatus('กำลังโหลด...');
-      const mode = statusFilter.value;
-      const url = mode === 'deleted'
-        ? '/appointments?status=deleted&limit=500'
-        : mode === 'all'
-          ? '/appointments?limit=500'
-          : '/appointments?activeOnly=true&limit=500';
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('โหลดนัดหมายไม่ได้');
-      state.items = await res.json();
-      state.editingId = null;
-      setStatus('พบ ' + state.items.length + ' รายการ');
-      render();
-    }
-
-    function getRowPayload(row) {
-      const data = {};
-      row.querySelectorAll('[data-field]').forEach(input => {
-        data[input.dataset.field] = input.value;
-      });
-      return data;
-    }
-
-    async function saveRow(row) {
-      const id = row.dataset.id;
-      const payload = getRowPayload(row);
-      setStatus('กำลังบันทึก...');
-      const res = await fetch('/appointments/' + encodeURIComponent(id), {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(result.error || 'บันทึกไม่ได้');
-      const index = state.items.findIndex(item => item._id === id);
-      if (index >= 0) state.items[index] = result;
-      state.editingId = null;
-      setStatus('บันทึกแล้ว: ' + formatBangkok(result.startAt));
-      render();
-    }
-
-    async function deleteRow(row) {
-      const id = row.dataset.id;
-      if (!confirm('ลบนัดหมายนี้หรือไม่? ระบบจะลบแบบ soft delete')) return;
-      setStatus('กำลังลบ...');
-      const res = await fetch('/appointments/' + encodeURIComponent(id), { method: 'DELETE' });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(result.error || 'ลบไม่ได้');
-      const index = state.items.findIndex(item => item._id === id);
-      if (index >= 0) state.items[index] = result;
-      setStatus('ลบแล้ว');
-      render();
-    }
-
-    body.addEventListener('click', async event => {
-      const button = event.target.closest('button[data-action]');
-      if (!button) return;
-      const row = event.target.closest('tr[data-id]');
-      const action = button.dataset.action;
-      try {
-        if (action === 'edit') {
-          state.editingId = row.dataset.id;
-          render();
-        } else if (action === 'cancel') {
-          state.editingId = null;
-          render();
-        } else if (action === 'save') {
-          await saveRow(row);
-        } else if (action === 'delete') {
-          await deleteRow(row);
-        }
-      } catch (err) {
-        setStatus(err.message);
-      }
-    });
-
-    document.getElementById('refreshBtn').addEventListener('click', () => loadAppointments().catch(err => setStatus(err.message)));
-    statusFilter.addEventListener('change', () => loadAppointments().catch(err => setStatus(err.message)));
-    searchInput.addEventListener('input', render);
-
-    loadAppointments().catch(err => setStatus(err.message));
-  </script>
-</body>
-</html>`;
-}
-
-function renderFormsIndexPage() {
-  return `<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SmartLife แบบฟอร์ม</title>
-  <style>
-    body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; background: #f7f8fb; color: #17202a; }
-    main { max-width: 760px; margin: 0 auto; padding: 22px; }
-    h1 { margin: 0 0 6px; font-size: 24px; }
-    p { color: #5f6b7a; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 18px; }
-    a { display: grid; gap: 8px; min-height: 120px; padding: 16px; border: 1px solid #d9dee8; border-radius: 8px; background: #fff; color: inherit; text-decoration: none; }
-    strong { font-size: 18px; }
-    span { color: #5f6b7a; line-height: 1.45; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>แยกแบบฟอร์ม SmartLife</h1>
-    <p>เลือกแบบฟอร์มตามงานที่ต้องการ ไม่ใช้ฟอร์มเดียวปนกัน</p>
-    <div class="grid">
-      <a href="/register-form">
-        <strong>แบบฟอร์มสมัครสมาชิก</strong>
-        <span>กรอกข้อมูลผู้ใช้ แพ็กเกจ และหมายเหตุการจ่าย</span>
-      </a>
-      <a href="/appointment-form">
-        <strong>แบบฟอร์มนัดหมาย</strong>
-        <span>บันทึกนัดหมาย เวลา สถานที่ ชุด และสิ่งที่ต้องเตรียม</span>
-      </a>
-      <a href="/appointments-panel">
-        <strong>แผงแก้ไขนัดหมาย</strong>
-        <span>ดูรายการทั้งหมด แก้ไข บันทึก หรือลบทีละรายการ</span>
-      </a>
-    </div>
-  </main>
-</body>
-</html>`;
-}
-
-function renderLiffCalendarPage() {
-  const liffId = config.liffId || '';
-
-  return `<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SmartLife LIFF Calendar</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #090111;
-      --panel: rgba(18, 7, 32, 0.9);
-      --panel-strong: rgba(30, 9, 49, 0.96);
-      --line: rgba(255, 77, 216, 0.38);
-      --text: #fff7ff;
-      --muted: #c9b6d6;
-      --green: #ff4fd8;
-      --blue: #6ee7ff;
-      --red: #ff6b9a;
-      --neon: #ff4fd8;
-      --neon-soft: rgba(255, 79, 216, 0.22);
-      font-family: "Segoe UI", Tahoma, sans-serif;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at 50% 18%, rgba(255, 79, 216, 0.24), transparent 28%),
-        radial-gradient(circle at 50% 85%, rgba(110, 231, 255, 0.15), transparent 30%),
-        linear-gradient(180deg, #11041f 0%, var(--bg) 58%, #05000a 100%);
-      color: var(--text);
-      font-size: 15px;
-    }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background:
-        linear-gradient(115deg, transparent 0 18%, rgba(255, 79, 216, 0.08) 18.2% 18.6%, transparent 18.8% 100%),
-        linear-gradient(245deg, transparent 0 24%, rgba(110, 231, 255, 0.06) 24.2% 24.6%, transparent 24.8% 100%),
-        linear-gradient(90deg, rgba(255, 79, 216, 0.05) 1px, transparent 1px),
-        linear-gradient(0deg, rgba(110, 231, 255, 0.04) 1px, transparent 1px);
-      background-size: 100% 100%, 100% 100%, 38px 38px, 38px 38px;
-      opacity: 0.75;
-    }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      background: rgba(9, 1, 17, 0.92);
-      border-bottom: 1px solid var(--line);
-      box-shadow: 0 0 28px var(--neon-soft);
-      padding: 14px 16px;
-      backdrop-filter: blur(10px);
-    }
-    main { position: relative; max-width: 860px; margin: 0 auto; padding: 14px; display: grid; gap: 12px; }
-    h1 { margin: 0; font-size: 21px; text-shadow: 0 0 16px rgba(255, 79, 216, 0.58); }
-    .sub { margin: 4px 0 0; color: var(--muted); }
-    .toolbar, form, .item {
-      background: linear-gradient(180deg, var(--panel-strong), var(--panel));
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      box-shadow: 0 0 0 1px rgba(255, 79, 216, 0.08), 0 14px 36px rgba(0, 0, 0, 0.28), inset 0 0 22px rgba(255, 79, 216, 0.06);
-      padding: 12px;
-    }
-    .toolbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-    .seg { display: flex; gap: 6px; flex-wrap: wrap; }
-    .sectionTitle { margin: 4px 0; font-size: 16px; }
-    .hidden { display: none; }
-    button {
-      min-height: 38px;
-      border: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--text);
-      border-radius: 6px;
-      padding: 8px 10px;
-      font: inherit;
-      cursor: pointer;
-      box-shadow: inset 0 0 14px rgba(255, 79, 216, 0.05);
-    }
-    button.active { border-color: var(--neon); color: #fff; font-weight: 700; box-shadow: 0 0 16px var(--neon-soft), inset 0 0 18px rgba(255, 79, 216, 0.12); }
-    button.primary { background: linear-gradient(180deg, #ff66df, #9f2bff); border-color: #ff93e9; color: #fff; font-weight: 700; box-shadow: 0 0 20px rgba(255, 79, 216, 0.42); }
-    button.danger { color: var(--red); border-color: rgba(255, 107, 154, 0.54); }
-    button.done { color: #8df7ff; border-color: rgba(141, 247, 255, 0.52); }
-    input, textarea {
-      width: 100%;
-      min-height: 40px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      color: var(--text);
-      padding: 9px;
-      font: inherit;
-      background: rgba(6, 0, 12, 0.72);
-      outline-color: var(--neon);
-    }
-    select { width: 100%; min-height: 40px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); padding: 9px; font: inherit; background: rgba(6, 0, 12, 0.72); }
-    form { display: grid; gap: 10px; }
-    label { display: grid; gap: 5px; font-weight: 650; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .status { min-height: 22px; color: var(--muted); }
-    .list { display: grid; gap: 8px; }
-    .item { display: grid; gap: 6px; }
-    .itemHead { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
-    .title { font-weight: 750; }
-    .time { color: var(--blue); font-weight: 700; white-space: nowrap; text-shadow: 0 0 12px rgba(110, 231, 255, 0.36); }
-    .meta { color: var(--muted); line-height: 1.45; }
-    .doneText { text-decoration: line-through; color: var(--muted); }
-    .empty { color: var(--muted); padding: 18px; text-align: center; }
-    .notice { background: rgba(255, 79, 216, 0.1); border: 1px solid var(--line); color: #ffe8fb; border-radius: 8px; padding: 10px; }
-    @media (max-width: 680px) {
-      .grid { grid-template-columns: 1fr; }
-      .itemHead { display: grid; }
-      .time { white-space: normal; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>SmartLife Calendar</h1>
-    <p class="sub">To Do List และนัดหมายผ่าน LINE LIFF</p>
-  </header>
-  <main>
-    <div id="liffNotice" class="notice hidden"></div>
-    <div class="toolbar">
-      <div class="seg">
-        <button type="button" data-view="appointments">นัดหมาย</button>
-        <button type="button" data-view="todos">To-do</button>
-      </div>
-      <div class="seg">
-        <button type="button" data-filter="today">วันนี้</button>
-        <button type="button" data-filter="week">7 วัน</button>
-        <button type="button" data-filter="all">ทั้งหมด</button>
-      </div>
-      <button id="refreshBtn" type="button">รีเฟรช</button>
-    </div>
-    <form id="appointmentForm">
-      <h2 class="sectionTitle">เพิ่มนัดหมาย</h2>
-      <label>หัวข้อ
-        <input name="title" required placeholder="เช่น ประชุมทีม">
-      </label>
-      <label>ประเภทนัดหมาย
-        <select id="appointmentTypeSelect" name="appointmentType">
-          <option value="single">วันเดียว</option>
-          <option value="multi_day">หลายวัน</option>
-          <option value="recurring">ประจำ</option>
-        </select>
-      </label>
-      <div class="grid">
-        <label><span id="startAtLabel">วันและเวลา</span>
-          <input name="startAt" type="datetime-local" required>
-        </label>
-        <label id="endAtField" class="hidden">วันและเวลาสิ้นสุด
-          <input id="endAtInput" name="endAt" type="datetime-local">
-        </label>
-        <label>สถานที่
-          <input name="locationName" placeholder="เช่น ห้องประชุม / บ้าน / ออนไลน์">
-        </label>
-      </div>
-      <div id="recurringFields" class="grid hidden">
-        <label>ทำซ้ำ
-          <select id="repeatSelect" name="repeat">
-            <option value="daily">ทุกวัน</option>
-            <option value="weekly">ทุกสัปดาห์</option>
-            <option value="monthly">ทุกเดือน</option>
-            <option value="monthly_first_weekend">เสาร์-อาทิตย์แรกของเดือน</option>
-          </select>
-        </label>
-        <label>จำนวนครั้ง
-          <input id="repeatCountInput" name="count" type="number" min="2" max="60" value="2">
-        </label>
-      </div>
-      <label id="occurrenceDetailsField" class="hidden">เรื่อง/รายละเอียดแต่ละครั้ง (บรรทัดละ 1 ครั้ง)
-        <textarea id="occurrenceDetailsInput" name="occurrenceDetails" rows="3" placeholder="ครั้งที่ 1: Greetings&#10;ครั้งที่ 2: Introductions"></textarea>
-      </label>
-      <div class="grid">
-        <label>ผู้ประสานงาน
-          <input name="contactName" placeholder="ชื่อผู้ประสานงาน">
-        </label>
-        <label>เบอร์โทรศัพท์
-          <input name="contactPhone" type="tel" placeholder="เช่น 0812345678">
-        </label>
-        <label>LINE ID
-          <input name="contactLineId" placeholder="LINE ID ผู้ประสานงาน">
-        </label>
-      </div>
-      <label>รายละเอียด/เตรียมตัว
-        <textarea name="preparation" rows="2" placeholder="สิ่งที่ต้องเตรียม"></textarea>
-      </label>
-      <input id="lineUserIdInput" name="lineUserId" type="hidden">
-      <button class="primary" type="submit">เพิ่มนัดหมาย</button>
-      <div id="statusText" class="status"></div>
-    </form>
-    <form id="todoForm" class="hidden">
-      <h2 class="sectionTitle">เพิ่ม To-do</h2>
-      <label>งานที่ต้องทำ
-        <input name="title" required placeholder="เช่น ตรวจถ่านไฟฉาย">
-      </label>
-      <div class="grid">
-        <label>กำหนดเวลา
-          <input name="dueAt" type="datetime-local">
-        </label>
-        <label>ความสำคัญ
-          <select name="priority">
-            <option value="normal">ปกติ</option>
-            <option value="high">สำคัญ</option>
-            <option value="urgent">เร่งด่วน</option>
-          </select>
-        </label>
-      </div>
-      <label>หมายเหตุ
-        <textarea name="notes" rows="2" placeholder="รายละเอียดเพิ่มเติม"></textarea>
-      </label>
-      <input id="todoLineUserIdInput" name="lineUserId" type="hidden">
-      <button class="primary" type="submit">เพิ่ม To-do</button>
-      <div id="todoStatusText" class="status"></div>
-    </form>
-    <section class="list" id="appointmentList"></section>
-    <section class="list hidden" id="todoList"></section>
-  </main>
-  <script>
-    window.SMARTLIFE_LIFF_ID = ${JSON.stringify(liffId)};
-    const state = { appointments: [], todos: [], filter: 'today', view: 'appointments', profile: null };
-    const appointmentList = document.getElementById('appointmentList');
-    const todoList = document.getElementById('todoList');
-    const appointmentForm = document.getElementById('appointmentForm');
-    const todoForm = document.getElementById('todoForm');
-    const statusText = document.getElementById('statusText');
-    const todoStatusText = document.getElementById('todoStatusText');
-    const notice = document.getElementById('liffNotice');
-    const lineUserIdInput = document.getElementById('lineUserIdInput');
-    const todoLineUserIdInput = document.getElementById('todoLineUserIdInput');
-    const appointmentTypeSelect = document.getElementById('appointmentTypeSelect');
-    const startAtLabel = document.getElementById('startAtLabel');
-    const endAtField = document.getElementById('endAtField');
-    const endAtInput = document.getElementById('endAtInput');
-    const recurringFields = document.getElementById('recurringFields');
-    const repeatSelect = document.getElementById('repeatSelect');
-    const repeatCountInput = document.getElementById('repeatCountInput');
-    const occurrenceDetailsField = document.getElementById('occurrenceDetailsField');
-    const occurrenceDetailsInput = document.getElementById('occurrenceDetailsInput');
-
-    function setStatus(text) { statusText.textContent = text || ''; }
-    function setTodoStatus(text) { todoStatusText.textContent = text || ''; }
-    function showNotice(text) {
-      if (!text) { notice.classList.add('hidden'); notice.textContent = ''; return; }
-      notice.textContent = text;
-      notice.classList.remove('hidden');
-    }
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-    }
-    function formatBangkok(value) {
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return '-';
-      return new Intl.DateTimeFormat('th-TH', {
-        timeZone: 'Asia/Bangkok',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-        hourCycle: 'h23',
-        numberingSystem: 'latn'
-      }).format(date).replace(/(\\d{1,2}):(\\d{2})$/, '$1.$2 น.');
-    }
-    function toBangkokInputValue(value) {
-      const parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/Bangkok',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-        hourCycle: 'h23'
-      }).formatToParts(new Date(value)).reduce((result, part) => {
-        if (part.type !== 'literal') result[part.type] = part.value;
-        return result;
-      }, {});
-      return parts.year + '-' + parts.month + '-' + parts.day + 'T' + parts.hour + ':' + parts.minute;
-    }
-    function bangkokDateKey(value) {
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return '';
-      return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/Bangkok',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit'
-      }).format(date);
-    }
-    function todayKey() { return bangkokDateKey(new Date()); }
-    function syncAppointmentTypeFields() {
-      const type = appointmentTypeSelect.value;
-      const isMultiDay = type === 'multi_day';
-      const isRecurring = type === 'recurring';
-      startAtLabel.textContent = isMultiDay ? 'วันและเวลาเริ่มต้น' : 'วันและเวลา';
-      endAtField.firstChild.textContent = isRecurring
-        ? 'วันและเวลาสิ้นสุดของครั้งแรก (เว้นว่างได้)'
-        : 'วันและเวลาสิ้นสุด';
-      endAtField.classList.toggle('hidden', !isMultiDay && !isRecurring);
-      recurringFields.classList.toggle('hidden', !isRecurring);
-      occurrenceDetailsField.classList.toggle('hidden', !isRecurring);
-      endAtInput.required = isMultiDay;
-      endAtInput.disabled = !isMultiDay && !isRecurring;
-      repeatSelect.required = isRecurring;
-      repeatSelect.disabled = !isRecurring;
-      repeatCountInput.required = isRecurring;
-      repeatCountInput.disabled = !isRecurring;
-      occurrenceDetailsInput.disabled = !isRecurring;
-      if (!isMultiDay) endAtInput.value = '';
-    }
-    function syncActiveButtons() {
-      document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === state.view));
-      document.querySelectorAll('[data-filter]').forEach(button => button.classList.toggle('active', button.dataset.filter === state.filter));
-    }
-    function shouldShowAppointment(item) {
-      if (item.status === 'deleted') return false;
-      if (state.filter === 'all') return true;
-      const itemDate = new Date(item.startAt);
-      if (Number.isNaN(itemDate.getTime())) return false;
-      const startKey = bangkokDateKey(item.startAt);
-      const endKey = bangkokDateKey(item.endAt || item.startAt);
-      if (state.filter === 'today') return startKey <= todayKey() && endKey >= todayKey();
-      if (state.filter === 'week') {
-        const now = Date.now();
-        const end = now + 7 * 24 * 60 * 60 * 1000;
-        const itemEnd = new Date(item.endAt || item.startAt).getTime();
-        return itemEnd >= now - 60 * 60 * 1000 && itemDate.getTime() <= end;
-      }
-      return true;
-    }
-    function shouldShowTodo(item) {
-      if (item.status === 'deleted') return false;
-      if (state.filter === 'all') return true;
-      if (item.status === 'done') return false;
-      if (!item.dueAt) return true;
-      const dueKey = bangkokDateKey(item.dueAt);
-      if (!dueKey) return true;
-      if (state.filter === 'today') return dueKey <= todayKey();
-      if (state.filter === 'week') return dueKey <= bangkokDateKey(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      return true;
-    }
-    function renderAppointments() {
-      const rows = state.appointments.filter(shouldShowAppointment).sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
-      if (!rows.length) {
-        appointmentList.innerHTML = '<div class="empty">ยังไม่มีนัดหมายในช่วงนี้</div>';
-        return;
-      }
-      appointmentList.innerHTML = rows.map(item => '<article class="item">' +
-        '<div class="itemHead"><div class="title">' + escapeHtml(item.title || '-') + '</div><div class="time">' +
-          escapeHtml(item.endAt ? formatBangkok(item.startAt) + ' - ' + formatBangkok(item.endAt) : formatBangkok(item.startAt)) +
-        '</div></div>' +
-        '<div class="meta">' + escapeHtml(item.appointmentType === 'multi_day' ? 'หลายวัน' : item.appointmentType === 'recurring' ? 'ครั้งที่ ' + (item.repeatIndex || item.occurrenceNumber || '-') + '/' + (item.repeatCount || '-') + ' · ' + ({ daily: 'ทุกวัน', weekly: 'ทุกสัปดาห์', monthly: 'ทุกเดือน', monthly_first_weekend: 'เสาร์-อาทิตย์แรกของเดือน' }[item.repeat] || 'ประจำ') : 'วันเดียว') + '</div>' +
-        '<div class="meta">' + escapeHtml([item.locationName ? 'สถานที่: ' + item.locationName : '', item.preparation ? 'เรื่อง/รายละเอียด: ' + item.preparation : '', item.contactName ? 'ผู้ประสานงาน: ' + item.contactName : '', item.contactPhone ? 'โทร: ' + item.contactPhone : '', item.contactLineId ? 'LINE: ' + item.contactLineId : ''].filter(Boolean).join(' | ') || '-') + '</div>' +
-        '<div class="seg"><button type="button" data-appointment-edit="' + escapeHtml(item._id) + '">แก้ไขครั้งนี้</button><button type="button" data-appointment-delete="' + escapeHtml(item._id) + '" class="danger">ลบ</button></div>' +
-      '</article>').join('');
-    }
-    function renderTodos() {
-      const priorityLabel = { urgent: 'เร่งด่วน', high: 'สำคัญ', normal: 'ปกติ' };
-      const rows = state.todos.filter(shouldShowTodo).sort((a, b) => {
-        if (a.status !== b.status) return a.status === 'done' ? 1 : -1;
-        return new Date(a.dueAt || '9999-12-31') - new Date(b.dueAt || '9999-12-31');
-      });
-      if (!rows.length) {
-        todoList.innerHTML = '<div class="empty">ยังไม่มี To-do ในช่วงนี้</div>';
-        return;
-      }
-      todoList.innerHTML = rows.map(item => {
-        const done = item.status === 'done';
-        const titleClass = done ? 'title doneText' : 'title';
-        const dueText = item.dueAt ? formatBangkok(item.dueAt) : 'ไม่กำหนดเวลา';
-        const meta = [priorityLabel[item.priority] || item.priority || 'ปกติ', item.category, item.notes].filter(Boolean).join(' | ') || '-';
-        const actionButton = done
-          ? '<button type="button" data-todo-reopen="' + escapeHtml(item._id) + '">เปิดใหม่</button>'
-          : '<button type="button" data-todo-complete="' + escapeHtml(item._id) + '" class="done">เสร็จแล้ว</button>';
-        return '<article class="item">' +
-          '<div class="itemHead"><div class="' + titleClass + '">' + escapeHtml(item.title || '-') + '</div><div class="time">' + escapeHtml(dueText) + '</div></div>' +
-          '<div class="meta">' + escapeHtml(meta) + '</div>' +
-          '<div class="seg">' + actionButton + '<button type="button" data-todo-delete="' + escapeHtml(item._id) + '" class="danger">ลบ</button></div>' +
-        '</article>';
-      }).join('');
-    }
-    function render() {
-      syncActiveButtons();
-      const isTodoView = state.view === 'todos';
-      appointmentForm.classList.toggle('hidden', isTodoView);
-      appointmentList.classList.toggle('hidden', isTodoView);
-      todoForm.classList.toggle('hidden', !isTodoView);
-      todoList.classList.toggle('hidden', !isTodoView);
-      renderAppointments();
-      renderTodos();
-    }
-    async function loadAll() {
-      setStatus('กำลังโหลดนัดหมาย...');
-      setTodoStatus('กำลังโหลด To-do...');
-      const appointmentRes = await fetch('/appointments?activeOnly=true&limit=500');
-      const todoRes = await fetch('/todos?activeOnly=true&limit=500');
-      if (!appointmentRes.ok) throw new Error('โหลดนัดหมายไม่ได้');
-      if (!todoRes.ok) throw new Error('โหลด To-do ไม่ได้');
-      state.appointments = await appointmentRes.json();
-      state.todos = await todoRes.json();
-      setStatus('พบนัดหมาย ' + state.appointments.length + ' รายการ');
-      setTodoStatus('พบ To-do ' + state.todos.length + ' รายการ');
-      render();
-    }
-    async function initLiff() {
-      if (!window.SMARTLIFE_LIFF_ID) {
-        showNotice('ยังไม่ได้ตั้ง LIFF_ID หน้าเว็บนี้ใช้งานแบบ browser ได้ แต่ยังไม่ดึง LINE user อัตโนมัติ');
-        return;
-      }
-      if (!window.liff) {
-        showNotice('โหลด LIFF SDK ไม่สำเร็จ ใช้งานแบบ browser ต่อได้');
-        return;
-      }
-      await liff.init({ liffId: window.SMARTLIFE_LIFF_ID });
-      if (!liff.isLoggedIn()) {
-        liff.login();
-        return;
-      }
-      state.profile = await liff.getProfile();
-      lineUserIdInput.value = state.profile.userId || '';
-      todoLineUserIdInput.value = state.profile.userId || '';
-      showNotice('เชื่อมกับ LINE แล้ว: ' + (state.profile.displayName || 'ผู้ใช้ LINE'));
-    }
-    document.querySelectorAll('[data-view]').forEach(button => {
-      button.addEventListener('click', () => {
-        state.view = button.dataset.view;
-        render();
-      });
-    });
-    document.querySelectorAll('[data-filter]').forEach(button => {
-      button.addEventListener('click', () => {
-        state.filter = button.dataset.filter;
-        render();
-      });
-    });
-    document.getElementById('refreshBtn').addEventListener('click', () => loadAll().catch(err => {
-      setStatus(err.message);
-      setTodoStatus(err.message);
-    }));
-    appointmentTypeSelect.addEventListener('change', syncAppointmentTypeFields);
-    appointmentForm.addEventListener('submit', async event => {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const submitButton = form.querySelector('button[type="submit"]');
-      const payload = Object.fromEntries(new FormData(form).entries());
-      const expectedCount = payload.appointmentType === 'recurring' ? Number(payload.count || 1) : 1;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000);
-      submitButton.disabled = true;
-      setStatus('กำลังบันทึก ' + expectedCount + ' รายการ กรุณารอสักครู่...');
-      try {
-        const res = await fetch('/appointments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        });
-        const result = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(result.error || 'เพิ่มไม่สำเร็จ');
-        form.reset();
-        syncAppointmentTypeFields();
-        if (state.profile && state.profile.userId) lineUserIdInput.value = state.profile.userId;
-        await loadAll();
-        const savedCount = Array.isArray(result) ? result.length : 1;
-        setStatus('เพิ่มนัดหมายแล้ว ' + savedCount + ' รายการ');
-      } catch (err) {
-        setStatus(err.name === 'AbortError'
-          ? 'ใช้เวลานานเกิน 60 วินาที กรุณากดรีเฟรชเพื่อตรวจรายการก่อนเพิ่มใหม่'
-          : 'เพิ่มไม่สำเร็จ: ' + err.message);
-      } finally {
-        clearTimeout(timeout);
-        submitButton.disabled = false;
-      }
-    });
-    todoForm.addEventListener('submit', async event => {
-      event.preventDefault();
-      setTodoStatus('กำลังเพิ่ม...');
-      const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
-      const res = await fetch('/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok) { setTodoStatus(result.error || 'เพิ่มไม่สำเร็จ'); return; }
-      event.currentTarget.reset();
-      if (state.profile && state.profile.userId) todoLineUserIdInput.value = state.profile.userId;
-      await loadAll();
-      setTodoStatus('เพิ่ม To-do แล้ว');
-    });
-    appointmentList.addEventListener('click', async event => {
-      const editButton = event.target.closest('[data-appointment-edit]');
-      if (editButton) {
-        const item = state.appointments.find(row => row._id === editButton.dataset.appointmentEdit);
-        if (!item) return;
-        const startAt = prompt('วันที่และเวลา เช่น 2026-07-03T09:00', toBangkokInputValue(item.startAt));
-        if (startAt === null) return;
-        const locationName = prompt('สถานที่', item.locationName || '');
-        if (locationName === null) return;
-        const preparation = prompt('เรื่อง/รายละเอียดครั้งนี้', item.preparation || '');
-        if (preparation === null) return;
-        const contactName = prompt('ผู้ประสานงาน', item.contactName || '');
-        if (contactName === null) return;
-        const contactPhone = prompt('เบอร์โทรศัพท์', item.contactPhone || '');
-        if (contactPhone === null) return;
-        const contactLineId = prompt('LINE ID', item.contactLineId || '');
-        if (contactLineId === null) return;
-        const editRes = await fetch('/appointments/' + encodeURIComponent(item._id), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ startAt, locationName, preparation, contactName, contactPhone, contactLineId })
-        });
-        if (!editRes.ok) { setStatus('แก้ไขไม่สำเร็จ'); return; }
-        await loadAll();
-        setStatus('แก้ไขนัดหมายครั้งนี้แล้ว');
-        return;
-      }
-      const button = event.target.closest('[data-appointment-delete]');
-      if (!button || !confirm('ลบรายการนี้หรือไม่?')) return;
-      const res = await fetch('/appointments/' + encodeURIComponent(button.dataset.appointmentDelete), { method: 'DELETE' });
-      if (!res.ok) { setStatus('ลบไม่สำเร็จ'); return; }
-      await loadAll();
-      setStatus('ลบแล้ว');
-    });
-    todoList.addEventListener('click', async event => {
-      const completeButton = event.target.closest('[data-todo-complete]');
-      const reopenButton = event.target.closest('[data-todo-reopen]');
-      const deleteButton = event.target.closest('[data-todo-delete]');
-      if (completeButton) {
-        const res = await fetch('/todos/' + encodeURIComponent(completeButton.dataset.todoComplete) + '/complete', { method: 'POST' });
-        if (!res.ok) { setTodoStatus('บันทึกไม่สำเร็จ'); return; }
-        await loadAll();
-        setTodoStatus('ปิดงานแล้ว');
-      }
-      if (reopenButton) {
-        const res = await fetch('/todos/' + encodeURIComponent(reopenButton.dataset.todoReopen) + '/reopen', { method: 'POST' });
-        if (!res.ok) { setTodoStatus('เปิดงานไม่สำเร็จ'); return; }
-        await loadAll();
-        setTodoStatus('เปิดงานใหม่แล้ว');
-      }
-      if (deleteButton) {
-        if (!confirm('ลบ To-do นี้หรือไม่?')) return;
-        const res = await fetch('/todos/' + encodeURIComponent(deleteButton.dataset.todoDelete), { method: 'DELETE' });
-        if (!res.ok) { setTodoStatus('ลบไม่สำเร็จ'); return; }
-        await loadAll();
-        setTodoStatus('ลบแล้ว');
-      }
-    });
-    initLiff().catch(err => showNotice('LIFF error: ' + err.message));
-    syncAppointmentTypeFields();
-    render();
-    loadAll().catch(err => {
-      setStatus(err.message);
-      setTodoStatus(err.message);
-    });
-  </script>
-</body>
-</html>`;
-}
-
-function renderSimpleFormPage({ title, subtitle, fields, submitLabel, action, successText, formKind, formNote }) {
-  const fieldHtml = fields.map(field => `
-      <label>
-        <span>${field.label}</span>
-        ${field.type === 'textarea'
-          ? `<textarea name="${field.name}" ${field.required ? 'required' : ''} rows="3"></textarea>`
-          : `<input name="${field.name}" type="${field.type || 'text'}" ${field.required ? 'required' : ''} ${field.placeholder ? `placeholder="${field.placeholder}"` : ''}>`}
-      </label>`).join('');
-
-  return `<!doctype html>
-<html lang="th">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${title}</title>
-  <style>
-    body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; background: #f7f8fb; color: #17202a; }
-    main { max-width: 640px; margin: 0 auto; padding: 22px; }
-    h1 { margin: 0 0 6px; font-size: 24px; }
-    p { color: #5f6b7a; }
-    form { background: #fff; border: 1px solid #d9dee8; border-radius: 8px; padding: 18px; display: grid; gap: 14px; }
-    label { display: grid; gap: 6px; font-weight: 600; }
-    input, textarea { width: 100%; min-height: 40px; border: 1px solid #d9dee8; border-radius: 6px; padding: 9px; font: inherit; }
-    button { min-height: 42px; border: 0; border-radius: 6px; background: #12805c; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-    nav { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
-    nav a { color: #1f5fbf; text-decoration: none; font-weight: 600; }
-    .badge { display: inline-block; margin: 10px 0 0; padding: 5px 9px; border-radius: 999px; background: #eaf3ff; color: #1f5fbf; font-size: 13px; font-weight: 700; }
-    .note { background: #fff8e8; border: 1px solid #f1d28a; border-radius: 8px; padding: 10px; color: #614a00; }
-    .status { min-height: 24px; color: #1f5fbf; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>${title}</h1>
-    <div class="badge">${formKind || 'แบบฟอร์ม SmartLife'}</div>
-    <p>${subtitle}</p>
-    <nav>
-      <a href="/forms">เลือกแบบฟอร์ม</a>
-      <a href="/register-form">สมัครสมาชิก</a>
-      <a href="/appointment-form">นัดหมาย</a>
-      <a href="/appointments-panel">แก้ไขนัดหมาย</a>
-    </nav>
-    ${formNote ? `<div class="note">${formNote}</div>` : ''}
-    <form id="smartlifeForm">
-      ${fieldHtml}
-      <button type="submit">${submitLabel}</button>
-      <div id="status" class="status"></div>
-    </form>
-  </main>
-  <script>
-    const form = document.getElementById('smartlifeForm');
-    const statusBox = document.getElementById('status');
-    form.addEventListener('submit', async event => {
-      event.preventDefault();
-      statusBox.textContent = 'กำลังบันทึก...';
-      const payload = Object.fromEntries(new FormData(form).entries());
-      const res = await fetch('${action}', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        statusBox.textContent = result.error || result.message || 'บันทึกไม่สำเร็จ';
-        return;
-      }
-      if (result.startAt) {
-        const date = new Date(result.startAt);
-        const formatted = new Intl.DateTimeFormat('th-TH', {
-          timeZone: 'Asia/Bangkok',
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-          hourCycle: 'h23',
-          numberingSystem: 'latn'
-        }).format(date).replace(/(\\d{1,2}):(\\d{2})$/, '$1.$2 น.');
-        statusBox.textContent = '${successText} เวลาไทย: ' + formatted;
-      } else {
-        statusBox.textContent = '${successText}';
-      }
-      form.reset();
-    });
-  </script>
-</body>
-</html>`;
-}
-
-function renderRegisterPanelPage() {
-  return renderSimpleFormPage({
-    title: 'สมัครสมาชิก SmartLife',
-    subtitle: 'กรอกข้อมูลพื้นฐาน เลือกแพ็กเกจ และใส่หมายเหตุการโอนจ่ายถ้ามี',
-    formKind: 'แบบฟอร์มสมัครสมาชิกเท่านั้น',
-    formNote: 'ฟอร์มนี้ใช้สมัครสมาชิก ไม่ใช้บันทึกนัดหมาย หากต้องการเพิ่มนัดหมายให้เลือกแบบฟอร์มนัดหมาย',
-    action: '/users/register',
-    submitLabel: 'สมัครสมาชิก',
-    successText: 'สมัครสมาชิกเรียบร้อยแล้ว',
-    fields: [
-      { name: 'username', label: 'ชื่อผู้ใช้', required: true },
-      { name: 'email', label: 'อีเมล', type: 'email', required: true },
-      { name: 'password', label: 'รหัสผ่าน', type: 'password', required: true },
-      { name: 'phone', label: 'เบอร์โทร' },
-      { name: 'lineUserId', label: 'LINE user id หรือ LINE id ถ้าทราบ' },
-      { name: 'plan', label: 'แพ็กเกจที่ต้องการ เช่น free, plus, vip' },
-      { name: 'paymentNote', label: 'หมายเหตุการจ่าย/เลขอ้างอิง/ข้อความถึงแอดมิน', type: 'textarea' }
-    ]
-  });
-}
-
-function renderAppointmentFormPage() {
-  return renderLiffCalendarPage();
 }
 
 function getAppointmentIdFromData(data) {
@@ -1990,7 +910,7 @@ function buildDuplicateMessage(groups) {
 }
 
 async function buildRequestedReport(userId) {
-  const items = await appointments.getToday();
+  const items = await appointments.getToday(new Date(), { lineUserId: userId });
   rememberAppointmentSelection(userId, items);
 
   if (items.length === 0) {
@@ -2144,6 +1064,7 @@ async function buildAppointmentRangeReport(userId, mode) {
     activeOnly: true,
     startAtFrom: range.start,
     startAtTo: range.end,
+    lineUserId: userId,
     limit: ['week', 'month'].includes(mode) ? 200 : 50
   });
   rememberAppointmentSelection(userId, items);
@@ -2183,6 +1104,7 @@ async function buildAppointmentRangeMessages(userId, mode) {
     activeOnly: true,
     startAtFrom: range.start,
     startAtTo: range.end,
+    lineUserId: userId,
     limit: ['week', 'month'].includes(mode) ? 200 : 50
   });
   rememberAppointmentSelection(userId, items);
@@ -2301,7 +1223,7 @@ async function handleAdminUnlockCommand(text, userId) {
 }
 
 async function sendAppointmentMenu(replyToken, userId) {
-  const items = await appointments.listAppointments({ activeOnly: true, limit: 50 });
+  const items = await appointments.listAppointments({ activeOnly: true, lineUserId: userId, limit: 50 });
   rememberAppointmentSelection(userId, items);
   return line.replyMessage(replyToken, buildAppointmentMenuMessages(items));
 }
@@ -2489,53 +1411,53 @@ async function handleTextMessage(event) {
   }
 
   if (['งานวันนี้', 'todoวันนี้', 'to-doวันนี้'].includes(command)) {
-    const items = await todos.getToday();
+    const items = await todos.getToday(new Date(), { lineUserId: userId });
     await line.replyMessage(event.replyToken, buildCommandOutputMessage({
       title: 'To-do วันนี้',
       available: true,
       detail: buildTodoListText(items, 'วันนี้ยังไม่มี To-do ที่ครบกำหนดค่ะ'),
       command: '/ปฏิทิน',
       actionLabel: 'เปิดปฏิทิน',
-      uri: getPublicUrl('/liff/calendar')
+      uri: getCalendarUrl(userId)
     }));
     return true;
   }
 
   if (['งานค้าง', 'todoค้าง', 'to-doค้าง'].includes(command)) {
-    const items = await todos.getOverdue();
+    const items = await todos.getOverdue(new Date(), { lineUserId: userId });
     await line.replyMessage(event.replyToken, buildCommandOutputMessage({
       title: 'To-do ค้าง',
       available: true,
       detail: buildTodoListText(items, 'ยังไม่มี To-do ค้างค่ะ'),
       command: '/ปฏิทิน',
       actionLabel: 'เปิดปฏิทิน',
-      uri: getPublicUrl('/liff/calendar')
+      uri: getCalendarUrl(userId)
     }));
     return true;
   }
 
   if (['งานสัปดาห์นี้', 'todoสัปดาห์นี้', 'to-doสัปดาห์นี้'].includes(command)) {
-    const items = await todos.getThisWeek();
+    const items = await todos.getThisWeek(new Date(), { lineUserId: userId });
     await line.replyMessage(event.replyToken, buildCommandOutputMessage({
       title: 'To-do สัปดาห์นี้',
       available: true,
       detail: buildTodoListText(items, 'สัปดาห์นี้ยังไม่มี To-do ค่ะ'),
       command: '/ปฏิทิน',
       actionLabel: 'เปิดปฏิทิน',
-      uri: getPublicUrl('/liff/calendar')
+      uri: getCalendarUrl(userId)
     }));
     return true;
   }
 
   if (['งานทั้งหมด', 'รายการงาน', 'to-do', 'todos'].includes(command)) {
-    const items = await todos.listTodos({ openOnly: true, limit: 50 });
+    const items = await todos.listTodos({ openOnly: true, lineUserId: userId, limit: 50 });
     await line.replyMessage(event.replyToken, buildCommandOutputMessage({
       title: 'To-do ทั้งหมด',
       available: true,
       detail: buildTodoListText(items, 'ยังไม่มี To-do ที่เปิดอยู่ค่ะ'),
       command: '/ปฏิทิน',
       actionLabel: 'เปิดปฏิทิน',
-      uri: getPublicUrl('/liff/calendar')
+      uri: getCalendarUrl(userId)
     }));
     return true;
   }
@@ -2547,7 +1469,7 @@ async function handleTextMessage(event) {
         'SmartLife Calendar',
         'เปิดหน้า To Do List Calendar สำหรับดู เพิ่ม และลบนัดหมายใน LINE',
         'เปิดปฏิทิน',
-        getPublicUrl('/liff/calendar')
+        getCalendarUrl(userId)
       )
     );
     return true;
@@ -2628,7 +1550,7 @@ async function handleTextMessage(event) {
   const completeTodoMatch = text.match(/^(?:งานเสร็จ|ปิดงาน|todo done|done)\s+([a-f\d]{24})$/i);
   if (completeTodoMatch) {
     try {
-      const completed = await todos.completeTodo(completeTodoMatch[1]);
+      const completed = await todos.completeTodo(completeTodoMatch[1], { lineUserId: userId });
       await line.reply(event.replyToken, `บันทึกว่างานเสร็จแล้วค่ะ\n\nงาน: ${completed.title || '-'}\nID: ${completed._id}`);
     } catch (err) {
       await line.reply(event.replyToken, `ยังปิดงานไม่ได้ค่ะ: ${err.message}`);
@@ -2671,7 +1593,10 @@ async function handleTextMessage(event) {
   const createAppointmentPayload = appointments.parseCreateText(text);
   if (createAppointmentPayload) {
     try {
-      const createdItems = await appointments.createRecurringAppointments(createAppointmentPayload);
+      const createdItems = await appointments.createRecurringAppointments({
+        ...createAppointmentPayload,
+        lineUserId: userId
+      });
       const created = createdItems[0];
       await line.replyMessage(event.replyToken, buildCommandOutputMessage({
         title: 'บันทึกนัดหมาย',
@@ -2700,7 +1625,11 @@ async function handleTextMessage(event) {
   const copyAppointmentPayload = appointments.parseCopyText(text);
   if (copyAppointmentPayload) {
     try {
-      const copied = await appointments.copyAppointment(copyAppointmentPayload.id, copyAppointmentPayload.changes);
+      const copied = await appointments.copyAppointment(
+        copyAppointmentPayload.id,
+        { ...copyAppointmentPayload.changes, lineUserId: userId },
+        { lineUserId: userId }
+      );
       await line.replyMessage(event.replyToken, buildCommandOutputMessage({
         title: 'คัดลอกนัดหมาย',
         available: true,
@@ -2873,6 +1802,28 @@ async function handleTextMessage(event) {
     return true;
   }
 
+  if (['จราจล', 'เหตุความไม่สงบ', 'ความปลอดภัยสาธารณะ'].includes(text)) {
+    await line.reply(
+      event.replyToken,
+      await buildDisasterReport(
+        ['public_safety', 'riot', 'civil_unrest', 'จราจล', 'เหตุความไม่สงบ'],
+        "เรียน นายท่าน ขณะนี้ยังไม่มีประกาศเหตุความไม่สงบที่ยัง active จากแหล่งทางการค่ะ"
+      )
+    );
+    return true;
+  }
+
+  if (['อุบัติภัยร้ายแรง', 'อุบัติเหตุร้ายแรง', 'เหตุร้ายแรง'].includes(text)) {
+    await line.reply(
+      event.replyToken,
+      await buildDisasterReport(
+        ['severe_accident', 'major_accident', 'อุบัติภัยร้ายแรง', 'อุบัติเหตุร้ายแรง'],
+        "เรียน นายท่าน ขณะนี้ยังไม่มีรายงานอุบัติภัยร้ายแรงที่ยัง active จากแหล่งทางการค่ะ"
+      )
+    );
+    return true;
+  }
+
   if (['สึนามิ', 'สึมามิ', 'เตือนสึนามิ', 'คลื่นสึนามิ'].includes(text)) {
     await line.reply(
       event.replyToken,
@@ -2885,7 +1836,7 @@ async function handleTextMessage(event) {
   }
 
   if (text === 'นัดหมายซ้ำ') {
-    const duplicateGroups = await appointments.findPotentialDuplicates();
+    const duplicateGroups = await appointments.findPotentialDuplicates({ lineUserId: userId });
     await line.reply(event.replyToken, buildDuplicateMessage(duplicateGroups));
     return true;
   }
@@ -2958,7 +1909,7 @@ async function handleTextMessage(event) {
   const editPayload = appointments.parseEditText(text, pendingId);
   if (editPayload) {
     try {
-      const updated = await appointments.updateAppointment(editPayload.id, editPayload.changes);
+      const updated = await appointments.updateAppointment(editPayload.id, editPayload.changes, { lineUserId: userId });
 
       if (pendingId) {
         pendingAppointmentEdits.delete(userId);
@@ -2982,7 +1933,7 @@ async function handleTextMessage(event) {
     }
 
     pendingAppointmentEdits.set(userId, editTargetId);
-    const appointment = await appointments.getAppointment(editTargetId);
+    const appointment = await appointments.getAppointment(editTargetId, { lineUserId: userId });
     await line.reply(event.replyToken, buildEditPrompt(appointment));
     return true;
   }
@@ -2990,7 +1941,7 @@ async function handleTextMessage(event) {
   const deleteId = appointments.parseDeleteText(text);
   if (deleteId) {
     try {
-      await appointments.deleteAppointment(deleteId);
+      await appointments.deleteAppointment(deleteId, { lineUserId: userId });
       await line.reply(event.replyToken, "เรียน นายท่าน นัดหมายนี้ถูกลบเรียบร้อยแล้วค่ะ");
     } catch (err) {
       await line.reply(event.replyToken, `เรียน นายท่าน ยังลบนัดหมายนี้ไม่ได้ค่ะ: ${err.message}`);
@@ -3009,13 +1960,13 @@ async function handleTextMessage(event) {
 
     if (selectionCommand.action === 'edit') {
       pendingAppointmentEdits.set(userId, appointmentId);
-      const appointment = await appointments.getAppointment(appointmentId);
+      const appointment = await appointments.getAppointment(appointmentId, { lineUserId: userId });
       await line.reply(event.replyToken, buildEditPrompt(appointment));
       return true;
     }
 
     try {
-      await appointments.deleteAppointment(appointmentId);
+      await appointments.deleteAppointment(appointmentId, { lineUserId: userId });
       await line.reply(event.replyToken, "เรียน นายท่าน นัดหมายนี้ถูกลบเรียบร้อยแล้วค่ะ");
     } catch (err) {
       await line.reply(event.replyToken, `เรียน นายท่าน ยังลบนัดหมายนี้ไม่ได้ค่ะ: ${err.message}`);
@@ -3059,89 +2010,81 @@ async function handleImageMessage(event) {
   return true;
 }
 
-async function handleLineWebhook(req, res) {
-  let event;
-
-  try {
-    event = req.body.events && req.body.events[0];
-    if (!event) {
-      return res.sendStatus(200);
-    }
-
-    const eventUserId = event.source && event.source.userId;
-    if (eventUserId) {
-      await lineRecipient.rememberLineRecipient(eventUserId);
-    }
-
-    if (event.type === 'message' && event.message && event.message.type === 'text') {
-      await handleTextMessage(event);
-      return res.sendStatus(200);
-    }
-
-    if (event.type === 'message' && event.message && event.message.type === 'location') {
-      await handleLocationMessage(event);
-      return res.sendStatus(200);
-    }
-
-    if (event.type === 'message' && event.message && event.message.type === 'image') {
-      await handleImageMessage(event);
-      return res.sendStatus(200);
-    }
-
-    if (event.type === 'postback') {
-      const data = event.postback.data;
-      const action = getPostbackAction(data);
-      const appointmentId = getAppointmentIdFromData(data);
-      const userId = event.source && event.source.userId;
-
-      if (action === 'edit') {
-        if (!appointmentId || !userId) {
-          await line.reply(event.replyToken, "เรียน นายท่าน กรุณาเลือกนัดหมายจากเมนูแก้ไขก่อนค่ะ");
-        } else {
-          pendingAppointmentEdits.set(userId, appointmentId);
-          const appointment = await appointments.getAppointment(appointmentId);
-          await line.reply(event.replyToken, buildEditPrompt(appointment));
-        }
-      } else if (action === 'list_appointments') {
-        await sendAppointmentMenu(event.replyToken, userId);
-      } else if (action === 'delete') {
-        if (!appointmentId) {
-          await line.reply(event.replyToken, "เรียน นายท่าน กรุณาเลือกนัดหมายจากเมนูแก้ไขก่อนค่ะ");
-        } else {
-          try {
-            await appointments.deleteAppointment(appointmentId);
-            await line.reply(event.replyToken, "เรียน นายท่าน นัดหมายนี้ถูกลบเรียบร้อยแล้วค่ะ");
-          } catch (err) {
-            await line.reply(event.replyToken, `เรียน นายท่าน ยังลบนัดหมายนี้ไม่ได้ค่ะ: ${err.message}`);
-          }
-        }
-      }
-    }
-
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("LINE webhook error:", err);
-
-    const userId = event && event.source && event.source.userId;
-    if (userId) {
-      try {
-        await line.pushMessageTo(userId, 'SmartLife received your message, but the reply card failed. Please type / again.');
-      } catch (pushErr) {
-        console.error("LINE webhook fallback push error:", pushErr);
-      }
-    }
-
-    res.sendStatus(200);
+async function handleLineEvent(event) {
+  const eventUserId = event.source && event.source.userId;
+  if (event.type === 'unfollow') {
+    if (eventUserId) await lineRecipient.deactivateLineRecipient(eventUserId);
+    return true;
   }
+  if (eventUserId) await lineRecipient.rememberLineRecipient(eventUserId);
+
+  if (event.type === 'follow') {
+    await line.reply(event.replyToken, 'ยินดีต้อนรับสู่ SmartLife ค่ะ พิมพ์ คู่มือ หรือกดเมนูด้านล่างเพื่อเริ่มใช้งาน');
+    return true;
+  }
+  if (event.type === 'message' && event.message && event.message.type === 'text') return handleTextMessage(event);
+  if (event.type === 'message' && event.message && event.message.type === 'location') return handleLocationMessage(event);
+  if (event.type === 'message' && event.message && event.message.type === 'image') return handleImageMessage(event);
+
+  if (event.type === 'postback') {
+    const data = event.postback.data;
+    const action = getPostbackAction(data);
+    const appointmentId = getAppointmentIdFromData(data);
+    const userId = eventUserId;
+
+    if (action === 'edit') {
+      if (!appointmentId || !userId) {
+        await line.reply(event.replyToken, 'เรียน นายท่าน กรุณาเลือกนัดหมายจากเมนูแก้ไขก่อนค่ะ');
+      } else {
+        pendingAppointmentEdits.set(userId, appointmentId);
+        const appointment = await appointments.getAppointment(appointmentId, { lineUserId: userId });
+        await line.reply(event.replyToken, buildEditPrompt(appointment));
+      }
+    } else if (action === 'list_appointments') {
+      await sendAppointmentMenu(event.replyToken, userId);
+    } else if (action === 'delete') {
+      try {
+        if (!appointmentId || !userId) throw new Error('Appointment not found');
+        await appointments.deleteAppointment(appointmentId, { lineUserId: userId });
+        await line.reply(event.replyToken, 'เรียน นายท่าน นัดหมายนี้ถูกลบเรียบร้อยแล้วค่ะ');
+      } catch (err) {
+        await line.reply(event.replyToken, `เรียน นายท่าน ยังลบนัดหมายนี้ไม่ได้ค่ะ: ${err.message}`);
+      }
+    }
+  }
+  return true;
+}
+
+async function handleLineWebhook(req, res) {
+  if (!config.lineChannelSecret) return res.status(503).json({ error: 'LINE webhook security is not configured' });
+  const signature = String(req.headers['x-line-signature'] || '');
+  if (!isValidLineSignature(req.rawBody, signature, config.lineChannelSecret)) {
+    return res.status(401).json({ error: 'Invalid LINE signature' });
+  }
+
+  const events = Array.isArray(req.body.events) ? req.body.events : [];
+  res.sendStatus(200);
+  const results = await Promise.allSettled(events.map(event => handleLineEvent(event)));
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') console.error(`LINE event ${index + 1} error:`, result.reason);
+  });
 }
 
 app.post('/webhook', handleLineWebhook);
 app.post('/webhooks/line', handleLineWebhook);
+
+app.use((err, req, res, next) => {
+  console.error('SmartLife request error:', err);
+  if (res.headersSent) return next(err);
+  return res.status(500).json({ error: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่ค่ะ' });
+});
 
 if (require.main === module) {
   app.listen(port, () => console.log(`SmartLife server running on port ${port}...`));
 }
 
 module.exports = {
-  app
+  app,
+  handleLineEvent,
+  handleLineWebhook
 };

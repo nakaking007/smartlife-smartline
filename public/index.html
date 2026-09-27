@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#087f5b">
+  <title>SmartLife</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity">
+      <div class="avatar" id="avatar"><i data-lucide="user-round"></i></div>
+      <div><p class="eyebrow">SMARTLIFE</p><h1 id="greeting">สวัสดีค่ะ นายท่าน</h1></div>
+    </div>
+    <button class="icon-button" id="shareButton" type="button" aria-label="แชร์ SmartLife" title="แชร์ SmartLife"><i data-lucide="share-2"></i></button>
+  </header>
+
+  <main id="app" aria-live="polite">
+    <div class="system-banner" id="systemBanner">กำลังเชื่อมต่อ LINE...</div>
+
+    <section class="view active" data-view="today">
+      <div class="section-heading"><div><p class="eyebrow">ภาพรวมวันนี้</p><h2>เช็กทุกอย่างในที่เดียว</h2></div><button class="icon-button" data-refresh title="โหลดใหม่"><i data-lucide="refresh-cw"></i></button></div>
+      <div class="weather-strip" id="weatherStrip"><span>กำลังโหลดอากาศ...</span></div>
+      <div class="summary-grid">
+        <button class="summary-tile" data-go="schedule"><i data-lucide="calendar-days"></i><strong id="appointmentCount">0</strong><span>นัดหมายวันนี้</span></button>
+        <button class="summary-tile" data-go="schedule"><i data-lucide="list-checks"></i><strong id="todoCount">0</strong><span>งานวันนี้</span></button>
+        <button class="summary-tile alert-tile" data-go="alerts"><i data-lucide="triangle-alert"></i><strong id="alertCount">0</strong><span>ภัยเตือนที่ยังมีผล</span></button>
+      </div>
+      <div class="content-block"><div class="block-title"><h3>กำหนดการถัดไป</h3><button class="text-button" data-go="schedule">ดูทั้งหมด</button></div><div id="todayAppointments" class="item-list"></div></div>
+      <div class="content-block"><div class="block-title"><h3>ประกาศสำคัญ</h3><button class="text-button" data-go="alerts">ดูทั้งหมด</button></div><div id="todayAlerts" class="item-list"></div></div>
+    </section>
+
+    <section class="view" data-view="schedule">
+      <div class="section-heading"><div><p class="eyebrow">ส่วนตัวของคุณ</p><h2>นัดหมายและ To-do</h2></div></div>
+      <div class="segmented" role="tablist"><button class="active" data-mode="appointments">นัดหมาย</button><button data-mode="todos">To-do</button></div>
+      <form id="appointmentForm" class="editor-form">
+        <input type="hidden" name="id">
+        <label>ชื่องาน<input name="title" required maxlength="160" placeholder="เช่น ประชุมทีม"></label>
+        <div class="form-grid"><label>วันและเวลา<input name="startAt" type="datetime-local" required></label><label>สถานที่<input name="locationName" maxlength="160" placeholder="ระบุสถานที่"></label></div>
+        <label>สิ่งที่ต้องเตรียม<input name="preparation" maxlength="300" placeholder="เอกสาร อุปกรณ์ หรือการแต่งกาย"></label>
+        <div class="form-actions"><button class="button secondary hidden" id="cancelAppointmentEdit" type="button">ยกเลิก</button><button class="button primary" type="submit"><i data-lucide="save"></i><span id="appointmentSubmitText">บันทึกนัดหมาย</span></button></div>
+      </form>
+      <form id="todoForm" class="editor-form hidden">
+        <label>ชื่องาน<input name="title" required maxlength="160" placeholder="เช่น ส่งรายงาน"></label>
+        <div class="form-grid"><label>กำหนดเสร็จ<input name="dueAt" type="datetime-local"></label><label>ความสำคัญ<select name="priority"><option value="normal">ปกติ</option><option value="high">สำคัญ</option><option value="urgent">เร่งด่วน</option></select></label></div>
+        <label>หมายเหตุ<input name="notes" maxlength="300"></label>
+        <div class="form-actions"><button class="button primary" type="submit"><i data-lucide="plus"></i>เพิ่ม To-do</button></div>
+      </form>
+      <div id="appointmentList" class="item-list"></div><div id="todoList" class="item-list hidden"></div>
+    </section>
+
+    <section class="view" data-view="alerts">
+      <div class="section-heading"><div><p class="eyebrow">ประเทศไทยและอาเซียน</p><h2>ศูนย์ภัยเตือน</h2></div><button class="icon-button" data-refresh title="โหลดใหม่"><i data-lucide="refresh-cw"></i></button></div>
+      <p class="notice">แสดงข้อมูลจากแหล่งทางการและเครือข่ายภัยพิบัติ โปรดเปิดประกาศต้นทางก่อนตัดสินใจ</p>
+      <div id="alertList" class="item-list"></div>
+    </section>
+
+    <section class="view" data-view="help">
+      <div class="section-heading"><div><p class="eyebrow">แตะเพื่อโทร</p><h2>ขอความช่วยเหลือฉุกเฉิน</h2></div></div>
+      <div class="sos-band"><i data-lucide="siren"></i><div><strong>อันตรายต่อชีวิต</strong><span>โทร 191 หรือ 1669 ทันทีตามประเภทเหตุ</span></div></div>
+      <div id="emergencyList"></div>
+    </section>
+
+    <section class="view" data-view="guide">
+      <div class="section-heading"><div><p class="eyebrow">ตั้งค่าและวิธีใช้</p><h2>คู่มือ SmartLife</h2></div></div>
+      <form id="preferenceForm" class="editor-form">
+        <label>จังหวัดที่ต้องการติดตาม<input name="province" maxlength="80" placeholder="เช่น กรุงเทพมหานคร"></label>
+        <label class="toggle-row"><span>รายงานทุกเช้า 06:00</span><input type="checkbox" name="morningReport" checked></label>
+        <label class="toggle-row"><span>ภัยพิบัติ</span><input type="checkbox" name="disaster" checked></label>
+        <label class="toggle-row"><span>พายุและฝนรุนแรง</span><input type="checkbox" name="severeWeather" checked></label>
+        <label class="toggle-row"><span>เหตุความปลอดภัยสาธารณะ</span><input type="checkbox" name="publicSafety" checked></label>
+        <label class="toggle-row"><span>อุบัติภัยร้ายแรง</span><input type="checkbox" name="severeAccident" checked></label>
+        <button class="button primary" type="submit"><i data-lucide="shield-check"></i>บันทึกการตั้งค่า</button>
+      </form>
+      <div class="command-list">
+        <h3>คำสั่งที่ใช้บ่อย</h3>
+        <button data-command="รายงานวันนี้"><code>รายงานวันนี้</code><span>อากาศและนัดหมายของคุณ</span></button>
+        <button data-command="นัดหมาย"><code>นัดหมาย</code><span>ดู แก้ไข หรือลบรายการ</span></button>
+        <button data-command="ภัยพิบัติ"><code>ภัยพิบัติ</code><span>ดูเหตุที่ยังมีผล</span></button>
+        <button data-command="บริการฉุกเฉิน"><code>บริการฉุกเฉิน</code><span>ดูเบอร์ติดต่อช่วยเหลือ</span></button>
+        <button data-command="คู่มือ"><code>คู่มือ</code><span>แสดงคำสั่งทั้งหมดในแชต</span></button>
+      </div>
+      <a class="button line-button" id="addFriendButton" target="_blank" rel="noopener"><i data-lucide="user-plus"></i>ส่ง SmartLife ให้คนอื่นใช้</a>
+      <div class="share-qr">
+        <img src="/assets/smartlife-share-qr.png" alt="QR Code เพิ่มเพื่อน SmartLife ใน LINE">
+        <div><strong>สแกนเพื่อเพิ่มเพื่อน</strong><span>LINE Official Account @426ovxwj</span><a href="/assets/smartlife-share-qr.png" download="SmartLife-QR.png"><i data-lucide="download"></i> ดาวน์โหลด QR Code</a></div>
+      </div>
+      <p class="privacy-note"><i data-lucide="lock-keyhole"></i>ข้อมูลนัดหมายและ To-do แยกตามบัญชี LINE ผู้ใช้อื่นไม่สามารถดูหรือแก้ไขข้อมูลของคุณได้</p>
+    </section>
+  </main>
+
+  <nav class="bottom-nav" aria-label="เมนูหลัก">
+    <button class="active" data-nav="today"><i data-lucide="house"></i><span>วันนี้</span></button>
+    <button data-nav="schedule"><i data-lucide="calendar-days"></i><span>นัดหมาย</span></button>
+    <button data-nav="alerts"><i data-lucide="triangle-alert"></i><span>ภัยเตือน</span></button>
+    <button data-nav="help"><i data-lucide="phone-call"></i><span>ช่วยเหลือ</span></button>
+    <button data-nav="guide"><i data-lucide="book-open"></i><span>คู่มือ</span></button>
+  </nav>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

@@ -10,6 +10,7 @@ const appointments = require('./utils/appointments');
 const todos = require('./utils/todos');
 const alerts = require('./utils/alerts');
 const liveDisasters = require('./utils/liveDisasters');
+const thaiSafetyAlerts = require('./utils/thaiSafetyAlerts');
 const earthquakeWarnings = require('./utils/earthquakeWarnings');
 const line = require('./utils/line');
 const lineRecipient = require('./utils/lineRecipient');
@@ -78,8 +79,8 @@ function buildHealthAdvice(report) {
   ].filter(Boolean).join("\n");
 }
 
-async function getActiveLineRecipients() {
-  const recipients = await lineRecipient.listActiveLineRecipients();
+async function getActiveLineRecipients(options = {}) {
+  const recipients = await lineRecipient.listActiveLineRecipients(options);
   return recipients.filter(Boolean);
 }
 
@@ -97,7 +98,7 @@ async function sendMorningReport(baseDate = new Date()) {
   try {
     const dateKey = getBangkokDateKey(baseDate);
     const report = await getWeatherReport();
-    const recipients = await getActiveLineRecipients();
+    const recipients = await getActiveLineRecipients({ morningReportOnly: true });
     let sentCount = 0;
 
     for (const recipient of recipients) {
@@ -206,6 +207,7 @@ async function sendMorningActiveAlerts(recipients = null) {
       const activeAlerts = await alerts.listUnsentUrgentAlerts(recipient, new Date());
 
       for (const alert of activeAlerts) {
+        if (!await lineRecipient.shouldReceiveAlert(recipient, alert)) continue;
         await line.pushMessage(alerts.formatAlert(alert), recipient);
         await alerts.markAlertSent(alert._id, recipient);
         sentCount += 1;
@@ -568,6 +570,7 @@ async function sendUrgentAlerts() {
       const urgentAlerts = await alerts.listUnsentUrgentAlerts(recipient);
 
       for (const alert of urgentAlerts) {
+        if (!await lineRecipient.shouldReceiveAlert(recipient, alert)) continue;
         await line.pushMessage(alerts.formatAlert(alert), recipient);
         await alerts.markAlertSent(alert._id, recipient);
       }
@@ -587,7 +590,14 @@ async function syncLiveDisasterAlerts({ force = false } = {}) {
 
     lastLiveDisasterSyncAt = now.getTime();
     await earthquakeWarnings.syncEarthquakeWarnings({ now });
-    const candidates = await liveDisasters.fetchLiveDisasterAlertCandidates(now);
+    const sourceResults = await Promise.allSettled([
+      liveDisasters.fetchLiveDisasterAlertCandidates(now),
+      thaiSafetyAlerts.fetchThaiOfficialSafetyAlertCandidates(now)
+    ]);
+    const candidates = sourceResults.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+    sourceResults.filter(result => result.status === 'rejected').forEach(result => {
+      console.error('SmartLife disaster source error:', result.reason.message);
+    });
     let insertedCount = 0;
 
     for (const candidate of candidates) {

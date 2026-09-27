@@ -9,6 +9,7 @@ const reminderSchema = new mongoose.Schema({
 
 const appointmentSchema = new mongoose.Schema({
   user: mongoose.Schema.Types.Mixed,
+  lineUserId: String,
   title: String,
   activityType: String,
   appointmentType: {
@@ -41,5 +42,8 @@ const appointmentSchema = new mongoose.Schema({
   strict: false,
   timestamps: true
 });
+
+appointmentSchema.index({ lineUserId: 1, startAt: 1, status: 1 });
+appointmentSchema.index({ lineUserId: 1, recurrenceGroupId: 1 });
 
 module.exports = mongoose.model('Appointment', appointmentSchema);

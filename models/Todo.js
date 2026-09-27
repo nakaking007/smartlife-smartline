@@ -21,4 +21,6 @@ const todoSchema = new mongoose.Schema({
   timestamps: true
 });
 
+todoSchema.index({ lineUserId: 1, status: 1, dueAt: 1 });
+
 module.exports = mongoose.model('Todo', todoSchema);

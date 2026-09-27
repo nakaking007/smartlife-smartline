@@ -6,6 +6,52 @@ const { getBangkokDayRange, getBangkokMinuteKey, parseBangkokClockTime, parseBan
 const DEFAULT_REMINDER_MINUTES = [1440, 180, 60];
 const MAX_RECURRING_APPOINTMENTS = 60;
 
+function normalizeLineUserId(value) {
+  return String(value || '').trim();
+}
+
+function getLineUserIdFromChanges(changes = {}) {
+  return normalizeLineUserId(
+    changes.lineUserId ||
+    changes.userId ||
+    (changes.user && changes.user.lineUserId)
+  );
+}
+
+function buildLineUserCondition(lineUserId) {
+  const normalized = normalizeLineUserId(lineUserId);
+  if (!normalized) {
+    return null;
+  }
+  return { lineUserId: normalized };
+}
+
+function addAndCondition(query, condition) {
+  if (!condition) {
+    return;
+  }
+
+  if (!Array.isArray(query.$and)) {
+    query.$and = [];
+  }
+
+  query.$and.push(condition);
+}
+
+function addLineUserFilter(query, filters = {}) {
+  addAndCondition(query, buildLineUserCondition(filters.lineUserId, filters));
+}
+
+function getAppointmentOwnerCondition(appointment) {
+  return buildLineUserCondition(appointment && appointment.lineUserId) || {
+    $or: [
+      { lineUserId: { $exists: false } },
+      { lineUserId: null },
+      { lineUserId: '' }
+    ]
+  };
+}
+
 const EDITABLE_FIELDS = [
   'title',
   'appointmentType',
@@ -105,7 +151,8 @@ async function assertNoDuplicateAppointment(appointment) {
   const candidates = await Appointment.find({
     _id: { $ne: appointment._id },
     status: { $ne: 'deleted' },
-    startAt: { $gte: start, $lt: end }
+    startAt: { $gte: start, $lt: end },
+    ...getAppointmentOwnerCondition(appointment)
   }).limit(20);
   const duplicate = candidates.find(candidate => getDuplicateKey(candidate) === duplicateKey);
 
@@ -126,12 +173,11 @@ async function listAppointments(filters = {}) {
   }
 
   if (filters.startAtFrom || filters.startAtTo) {
-    query.$and = [];
     if (filters.startAtTo) {
-      query.$and.push({ startAt: { $lte: filters.startAtTo } });
+      addAndCondition(query, { startAt: { $lte: filters.startAtTo } });
     }
     if (filters.startAtFrom) {
-      query.$and.push({
+      addAndCondition(query, {
         $or: [
           { endAt: { $gte: filters.startAtFrom } },
           { endAt: null, startAt: { $gte: filters.startAtFrom } },
@@ -140,6 +186,8 @@ async function listAppointments(filters = {}) {
       });
     }
   }
+
+  addLineUserFilter(query, filters);
 
   return Appointment.find(query).sort({ startAt: 1 }).limit(filters.limit || 50);
 }
@@ -151,8 +199,10 @@ async function createAppointment(changes = {}) {
   const endAt = ['multi_day', 'recurring'].includes(appointmentType) && changes.endAt
     ? parseBangkokDate(changes.endAt)
     : null;
+  const lineUserId = getLineUserIdFromChanges(changes);
   const appointment = new Appointment({
     ...changes,
+    lineUserId: lineUserId || undefined,
     title: changes.title || changes.summary || 'นัดหมาย',
     appointmentType,
     startAt,
@@ -285,9 +335,10 @@ async function createRecurringAppointments(changes = {}) {
   return items;
 }
 
-async function copyAppointment(id, changes = {}) {
-  const source = await getAppointment(id);
+async function copyAppointment(id, changes = {}, filters = {}) {
+  const source = await getAppointment(id, filters);
   return createAppointment({
+    lineUserId: getLineUserIdFromChanges(changes) || source.lineUserId,
     title: changes.title || source.title,
     startAt: changes.startAt || source.startAt,
     locationName: changes.locationName !== undefined ? changes.locationName : source.locationName,
@@ -300,12 +351,15 @@ async function copyAppointment(id, changes = {}) {
   });
 }
 
-async function getAppointment(id) {
+async function getAppointment(id, filters = {}) {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new Error('Invalid appointment id');
   }
 
-  const appointment = await Appointment.findById(id);
+  const ownerCondition = buildLineUserCondition(filters.lineUserId);
+  const appointment = ownerCondition
+    ? await Appointment.findOne({ _id: id, ...ownerCondition })
+    : await Appointment.findById(id);
   if (!appointment || appointment.status === 'deleted') {
     throw new Error('Appointment not found');
   }
@@ -313,10 +367,10 @@ async function getAppointment(id) {
   return appointment;
 }
 
-async function getToday(baseDate = new Date()) {
+async function getToday(baseDate = new Date(), filters = {}) {
   const { end } = getBangkokDayRange(baseDate);
 
-  return Appointment.find({
+  const query = {
     startAt: { $lte: end },
     $or: [
       { endAt: { $gte: baseDate } },
@@ -324,7 +378,11 @@ async function getToday(baseDate = new Date()) {
       { endAt: { $exists: false }, startAt: { $gte: baseDate } }
     ],
     status: { $ne: 'deleted' }
-  }).sort({ startAt: 1 });
+  };
+
+  addLineUserFilter(query, filters);
+
+  return Appointment.find(query).sort({ startAt: 1 });
 }
 
 async function findDueReminders(now = new Date()) {
@@ -369,12 +427,15 @@ async function markReminderSent(appointment, minutesBefore, sentAt = new Date())
   return appointment.save();
 }
 
-async function updateAppointment(id, changes) {
+async function updateAppointment(id, changes, filters = {}) {
   if (!mongoose.Types.ObjectId.isValid(id)) {
     throw new Error('Invalid appointment id');
   }
 
-  const appointment = await Appointment.findById(id);
+  const ownerCondition = buildLineUserCondition(filters.lineUserId);
+  const appointment = ownerCondition
+    ? await Appointment.findOne({ _id: id, ...ownerCondition })
+    : await Appointment.findById(id);
   if (!appointment) {
     throw new Error('Appointment not found');
   }
@@ -426,8 +487,8 @@ async function updateAppointment(id, changes) {
   return appointment.save();
 }
 
-async function deleteAppointment(id) {
-  return updateAppointment(id, { status: 'deleted' });
+async function deleteAppointment(id, filters = {}) {
+  return updateAppointment(id, { status: 'deleted' }, filters);
 }
 
 function parseEditText(text, pendingAppointmentId) {
@@ -564,8 +625,10 @@ function parseSelectionCommand(text) {
   return null;
 }
 
-async function findPotentialDuplicates() {
-  const appointments = await Appointment.find({ status: { $ne: 'deleted' } })
+async function findPotentialDuplicates(filters = {}) {
+  const query = { status: { $ne: 'deleted' } };
+  addLineUserFilter(query, filters);
+  const appointments = await Appointment.find(query)
     .sort({ startAt: 1 })
     .limit(200);
   const groups = new Map();

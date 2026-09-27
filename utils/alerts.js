@@ -539,7 +539,9 @@ function formatGenericAlert(data) {
     disaster: 'ภัยพิบัติ',
     natural_disaster: 'ภัยพิบัติ',
     ภัยพิบัติ: 'ภัยพิบัติ',
-    น้ำท่วม: 'น้ำท่วม'
+    น้ำท่วม: 'น้ำท่วม',
+    public_safety: 'ความปลอดภัยสาธารณะ/เหตุความไม่สงบ',
+    severe_accident: 'อุบัติภัยหรืออุบัติเหตุร้ายแรง'
   }[data.type] || data.type || '-';
 
   return [

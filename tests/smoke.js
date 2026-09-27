@@ -1,5 +1,8 @@
 const assert = require('assert');
+const crypto = require('crypto');
 const Appointment = require('../models/Appointment');
+const Todo = require('../models/Todo');
+const config = require('../config');
 const time = require('../utils/time');
 const appointments = require('../utils/appointments');
 const todos = require('../utils/todos');
@@ -16,6 +19,11 @@ const line = require('../utils/line');
 const earthquakeWarnings = require('../utils/earthquakeWarnings');
 const speech = require('../utils/speech');
 const writing = require('../utils/writing');
+const thaiSafetyAlerts = require('../utils/thaiSafetyAlerts');
+const lineAuth = require('../middleware/lineAuth');
+const lineWebhook = require('../middleware/lineWebhook');
+const richMenu = require('../scripts/setup-rich-menu');
+const shareQr = require('../scripts/generate-share-qr');
 const axios = require('axios');
 
 function assertIncludes(value, expected) {
@@ -375,6 +383,8 @@ function testFreeServicesText() {
   assertIncludes(text, '1784');
   assertIncludes(text, '1418');
   assertIncludes(text, '1300');
+  assertIncludes(text, '1182');
+  assert.strictEqual(text.includes('192 ภัยพิบัติแห่งชาติ'), false);
   assertIncludes(freeServices.buildUnlockPlanText(), '/admin ปลดล็อค');
   assertIncludes(freeServices.buildRegisterPaymentText(), 'ช่องทางจ่ายเงิน');
 }
@@ -455,6 +465,10 @@ function testManualIncludesCoreSlashCommands() {
     '/บริการฉุกเฉิน',
     '/ตรวจเช็ค'
   ].forEach(command => assertIncludes(text, command));
+  assertIncludes(text, 'จราจล');
+  assertIncludes(text, 'อุบัติภัยร้ายแรง');
+  assertIncludes(text, '@426ovxwj');
+  assertIncludes(text, 'ดูหรือแก้ข้อมูลของคนอื่นไม่ได้');
 }
 
 function testKnowledgeHelpers() {
@@ -466,6 +480,71 @@ function testScamCheck() {
   assertIncludes(report, 'เสี่ยง');
   assertIncludes(report, 'OTP');
   assertIncludes(report, 'ลิงก์');
+}
+
+async function testOwnerIsolationQueries() {
+  const ownerA = `U${'a'.repeat(32)}`;
+  const ownerB = `U${'b'.repeat(32)}`;
+  const id = '6a0fe46ad16ce9833c650bd0';
+  const originalAppointmentFindOne = Appointment.findOne;
+  const originalTodoFindOne = Todo.findOne;
+  Appointment.findOne = async query => {
+    assert.strictEqual(query.lineUserId, ownerA);
+    return { _id: id, title: 'ส่วนตัว A', status: 'scheduled' };
+  };
+  const todo = { _id: id, title: 'งาน A', lineUserId: ownerA, status: 'open', save: async () => todo };
+  Todo.findOne = async query => {
+    const ownerFilter = query.$and && query.$and.find(item => item.lineUserId);
+    assert.strictEqual(ownerFilter.lineUserId, ownerA);
+    return todo;
+  };
+  try {
+    await appointments.getAppointment(id, { lineUserId: ownerA });
+    await todos.updateTodo(id, { title: 'แก้แล้ว', lineUserId: ownerB }, { lineUserId: ownerA });
+    assert.strictEqual(todo.lineUserId, ownerA, 'Owner must never be changed by request body');
+  } finally {
+    Appointment.findOne = originalAppointmentFindOne;
+    Todo.findOne = originalTodoFindOne;
+  }
+}
+
+async function testLineIdTokenVerification() {
+  const previousChannelId = config.lineLoginChannelId;
+  config.lineLoginChannelId = '1234567890';
+  const expectedUserId = `U${'c'.repeat(32)}`;
+  const fakeClient = {
+    post: async (url, body) => {
+      assertIncludes(url, '/oauth2/v2.1/verify');
+      assertIncludes(body, 'client_id=1234567890');
+      return { data: { sub: expectedUserId, name: 'ผู้ทดสอบ', exp: Math.floor(Date.now() / 1000) + 3600 } };
+    }
+  };
+  try {
+    const profile = await lineAuth.verifyLineIdToken('signed-test-token', fakeClient);
+    assert.strictEqual(profile.sub, expectedUserId);
+  } finally {
+    config.lineLoginChannelId = previousChannelId;
+  }
+}
+
+function testLineWebhookSignatureVerification() {
+  const body = Buffer.from('{"events":[]}');
+  const secret = 'test-channel-secret';
+  const signature = crypto.createHmac('sha256', secret).update(body).digest('base64');
+  assert.strictEqual(lineWebhook.isValidLineSignature(body, signature, secret), true);
+  assert.strictEqual(lineWebhook.isValidLineSignature(body, 'invalid', secret), false);
+  assert.strictEqual(lineWebhook.isValidLineSignature(Buffer.from('{}'), signature, secret), false);
+}
+
+function testThaiOfficialSafetyClassification() {
+  assert.deepStrictEqual(thaiSafetyAlerts.classifyThaiSafetyTitle('ปภ. เตือนน้ำท่วมฉับพลัน'), { type: 'flood', severity: 'warning' });
+  assert.deepStrictEqual(thaiSafetyAlerts.classifyThaiSafetyTitle('แจ้งเหตุอุบัติเหตุหมู่ร้ายแรง'), { type: 'severe_accident', severity: 'warning' });
+  assert.strictEqual(thaiSafetyAlerts.isOfficialUrl('https://www.disaster.go.th/home'), true);
+  assert.strictEqual(thaiSafetyAlerts.isOfficialUrl('https://example.com/fake'), false);
+  const svg = richMenu.buildSvg();
+  assertIncludes(svg, 'ภัยเตือน');
+  assertIncludes(svg, 'ช่วยเหลือ');
+  assertIncludes(shareQr.getAddFriendUrl(), '%40426ovxwj');
 }
 
 async function run() {
@@ -488,6 +567,10 @@ async function run() {
   testManualIncludesCoreSlashCommands();
   testKnowledgeHelpers();
   testScamCheck();
+  await testOwnerIsolationQueries();
+  await testLineIdTokenVerification();
+  testLineWebhookSignatureVerification();
+  testThaiOfficialSafetyClassification();
   console.log('SmartLife smoke tests passed');
 }
 

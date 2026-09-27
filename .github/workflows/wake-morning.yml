@@ -2,8 +2,9 @@ name: Wake SmartLife for 06:00 report
 
 on:
   schedule:
-    # 23:01 UTC is 06:01 in Bangkok, after the in-app 06:00 job has had a minute to run.
-    - cron: '1 23 * * *'
+    # Wake twice before 06:00 Bangkok, then run idempotent catch-up attempts.
+    - cron: '45,55 22 * * *'
+    - cron: '1,6,11 23 * * *'
   workflow_dispatch:
 
 jobs:
@@ -12,6 +13,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check SmartLife health
-        run: curl --fail --silent --show-error --max-time 30 https://smartlife-smartline2.onrender.com/health
+        run: curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 10 --retry-connrefused https://smartlife-smartline2.onrender.com/health
       - name: Run morning report and disaster catch-up
-        run: curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 15 --retry-connrefused --request POST https://smartlife-smartline2.onrender.com/cron/morning-catchup
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '1,6,11 23 * * *'
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: curl --fail --silent --show-error --max-time 120 --retry 3 --retry-delay 15 --retry-connrefused --header "Authorization: Bearer $CRON_SECRET" --request POST https://smartlife-smartline2.onrender.com/cron/morning-catchup

@@ -6,3 +6,4 @@ cloudflared-smartlife*.log
 logs/
 .tools/
 uploads/
+backups/

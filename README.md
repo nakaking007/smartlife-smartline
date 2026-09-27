@@ -18,16 +18,13 @@ npm install
 
 5. สร้างผู้ใช้ฐานข้อมูล
 
-```bash
-mongo < createSmartlife.js
-mongo < createAdmin.js
-```
+ตั้งรหัสผ่านใหม่ผ่าน Environment Variable ก่อน ห้ามเขียนรหัสจริงลงใน repo:
 
-หากเครื่องใช้ MongoDB รุ่นใหม่ ให้ใช้ `mongosh` แทน `mongo`
-
-```bash
-mongosh < createSmartlife.js
-mongosh < createAdmin.js
+```powershell
+$env:SMARTLIFE_DB_PASSWORD="รหัสผ่านใหม่ที่คาดเดายาก"
+$env:SMARTLIFE_ADMIN_PASSWORD="รหัสผ่านผู้ดูแลอีกชุดหนึ่ง"
+mongosh createSmartlife.js
+mongosh createAdmin.js
 ```
 
 6. รันระบบ
@@ -101,6 +98,16 @@ http://localhost:3000/appointments-panel
 
 ระบบจะเปลี่ยนสถานะนัดหมายที่ลบเป็น `deleted` เพื่อป้องกันการลบถาวรโดยไม่ตั้งใจ
 
+## การให้ผู้อื่นใช้งานและความเป็นส่วนตัว
+
+ให้ผู้ใช้ค้นหา LINE Official Account `@426ovxwj` แล้วกดเพิ่มเพื่อน หรือกดปุ่ม `แชร์` ในหน้า SmartLife เพื่อส่งลิงก์เพิ่มเพื่อนให้ผู้อื่น
+
+หน้า `คู่มือ` มี QR Code สำหรับเพิ่มเพื่อนและปุ่มดาวน์โหลดไฟล์ภาพไปแชร์ หากเปลี่ยน LINE Official Account ให้แก้ `LINE_OFFICIAL_ACCOUNT_ID` แล้วรัน `npm run share-qr:generate` ใหม่
+
+หน้า LIFF ส่ง LINE ID token ไปตรวจสอบกับ LINE ที่ฝั่ง server ทุกครั้ง API นัดหมายและ To-do จะใช้ LINE user ID ที่ผ่านการตรวจสอบเท่านั้น ไม่รับ user ID จาก URL หรือข้อมูลที่ผู้ใช้แก้เอง ผู้ใช้จึงดู แก้ หรือลบได้เฉพาะข้อมูลของตนเอง
+
+เมนูด้านล่างมี 5 ส่วน: วันนี้, นัดหมาย, ภัยเตือน, ช่วยเหลือ และคู่มือ ผู้ใช้สามารถปิดรายงานเช้า 06:00 หรือเลือกประเภทภัยเตือนที่ต้องการได้จากหน้าช่วยเหลือ
+
 ## คำสั่งใน LINE
 
 ### คำสั่งเร็วแบบ /
@@ -163,6 +170,8 @@ http://localhost:3000/appointments-panel
 | ดูแผ่นดินไหว | `แผ่นดินไหว` | แสดงรายงานแผ่นดินไหวที่ยัง active |
 | ดูสึนามิ | `สึนามิ` | แสดงรายงานสึนามิที่ยัง active |
 | ดูน้ำท่วม | `น้ำท่วม` | แสดงรายงานน้ำท่วมที่ยัง active |
+| ดูความไม่สงบ | `จราจล` หรือ `เหตุความไม่สงบ` | แสดงประกาศความปลอดภัยสาธารณะที่ยัง active จากแหล่งทางการ |
+| ดูอุบัติภัยร้ายแรง | `อุบัติภัยร้ายแรง` หรือ `อุบัติเหตุร้ายแรง` | แสดงรายงานเหตุร้ายแรงที่ยัง active จากแหล่งทางการ |
 | ดูอากาศจากตำแหน่งจริง | ส่งโลเคชันใน LINE | แสดงอุณหภูมิ ฝน ลม/พายุ PM2.5 และคำประเมินจากพิกัดที่ส่งมา |
 | ถามฝน | `วันนี้ฝนจะตกไหม` | ตอบโอกาสฝน 12 ชั่วโมงข้างหน้าและฝนล่าสุด 1 ชั่วโมง |
 | ถามอุณหภูมิ | `วันนี้อุณหภูมิสูงสุดเท่าไร` | ตอบอุณหภูมิสูงสุดวันนี้ |
@@ -389,8 +398,17 @@ MONGODB_URI=mongodb://localhost:27017/smartlife
 MONGODB_DNS_SERVERS=8.8.8.8,1.1.1.1
 LINE_ACCESS_TOKEN=...
 LINE_USER_ID=...
+LINE_CHANNEL_SECRET=...
+LINE_LOGIN_CHANNEL_ID=...
+LINE_OFFICIAL_ACCOUNT_ID=@426ovxwj
+LIFF_ID=...
 WEATHER_API_KEY=...
+CRON_SECRET=...
 ```
+
+ค่าที่มีคำว่า `SECRET`, `TOKEN`, `PASSWORD` และ API key ต้องตั้งใน Environment Variables ของเครื่องหรือ Render/GitHub Secrets เท่านั้น ห้าม commit ลง repo
+
+หลังสร้าง LIFF ให้ตั้ง Endpoint URL เป็น `https://โดเมนของระบบ/liff/calendar` เปิด scope `openid` และ `profile` แล้วนำ LIFF ID กับ LINE Login Channel ID ไปใส่ใน Environment Variables จากนั้นรัน `npm run rich-menu:setup` หนึ่งครั้งเพื่อสร้างและผูกเมนูด้านล่างกับ LINE Official Account
 
 ## ตรวจเสถียรภาพระบบ
 
