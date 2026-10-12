@@ -61,6 +61,7 @@ async function updateLineRecipient(userId, changes = {}) {
     allowed.alertPreferences = {
       disaster: changes.alertPreferences.disaster !== false,
       severeWeather: changes.alertPreferences.severeWeather !== false,
+      airQuality: changes.alertPreferences.airQuality !== false,
       publicSafety: changes.alertPreferences.publicSafety !== false,
       severeAccident: changes.alertPreferences.severeAccident !== false
     };
@@ -150,12 +151,26 @@ async function listActiveLineRecipients(options = {}) {
 
 async function shouldReceiveAlert(userId, alert = {}) {
   const saved = await getLineRecipient(userId);
+  return matchesAlertPreferences(saved, alert);
+}
+
+function matchesAlertPreferences(saved, alert = {}) {
   const preferences = saved?.alertPreferences || {};
   const type = String(alert.type || '').toLowerCase();
+  if (!matchesAlertProvince(saved?.province, alert)) return false;
+  if (type === 'air_quality') return preferences.airQuality !== false;
   if (/storm|typhoon|cyclone|thunder|rain|weather|พายุ|ฝน/.test(type)) return preferences.severeWeather !== false;
   if (/riot|civil_unrest|public_safety|security|จราจล/.test(type)) return preferences.publicSafety !== false;
   if (/accident|industrial|fire|hazmat|อุบัติภัย|อุบัติเหตุ/.test(type)) return preferences.severeAccident !== false;
   return preferences.disaster !== false;
+}
+
+function matchesAlertProvince(province, alert = {}) {
+  if (!province || !alert.areaVerified) return true;
+  // Region-only descriptions cannot safely exclude a province.
+  if (/ภาค|ทั่วประเทศ|ประเทศไทย|ทุกจังหวัด|Thailand|northern|southern|central|northeast/i.test(String(alert.areaText || ''))) return true;
+  const normalize = value => String(value || '').replace(/จังหวัด|จ\.|\s/g, '').replace(/กรุงเทพมหานคร|กรุงเทพฯ/g, 'กรุงเทพ');
+  return normalize(alert.areaText).includes(normalize(province));
 }
 
 module.exports = {
@@ -166,5 +181,7 @@ module.exports = {
   updateLineRecipient,
   recoverLineRecipient,
   listActiveLineRecipients,
-  shouldReceiveAlert
+  shouldReceiveAlert,
+  matchesAlertPreferences,
+  matchesAlertProvince
 };

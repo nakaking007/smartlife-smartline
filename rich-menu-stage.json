@@ -1,0 +1,93 @@
+{
+  "richMenuId": "richmenu-6e71834139761cbf88addad4c52cddca",
+  "createdAt": "2026-10-12T13:26:29.567Z",
+  "activated": true,
+  "size": {
+    "width": 2500,
+    "height": 1686
+  },
+  "areas": [
+    {
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 833,
+        "height": 843
+      },
+      "action": {
+        "label": "วันนี้",
+        "type": "uri",
+        "uri": "https://liff.line.me/2011757736-kSqCYyU0?view=today"
+      }
+    },
+    {
+      "bounds": {
+        "x": 833,
+        "y": 0,
+        "width": 834,
+        "height": 843
+      },
+      "action": {
+        "label": "นัดหมาย",
+        "type": "uri",
+        "uri": "https://liff.line.me/2011757736-kSqCYyU0?view=schedule"
+      }
+    },
+    {
+      "bounds": {
+        "x": 1667,
+        "y": 0,
+        "width": 833,
+        "height": 843
+      },
+      "action": {
+        "label": "เตือนภัย",
+        "type": "uri",
+        "uri": "https://liff.line.me/2011757736-kSqCYyU0?view=alerts"
+      }
+    },
+    {
+      "bounds": {
+        "x": 0,
+        "y": 843,
+        "width": 833,
+        "height": 843
+      },
+      "action": {
+        "label": "คุยกับ AI",
+        "type": "message",
+        "text": "คุยกับ AI"
+      }
+    },
+    {
+      "bounds": {
+        "x": 833,
+        "y": 843,
+        "width": 834,
+        "height": 843
+      },
+      "action": {
+        "label": "ช่วยเหลือ",
+        "type": "uri",
+        "uri": "https://liff.line.me/2011757736-kSqCYyU0?view=help"
+      }
+    },
+    {
+      "bounds": {
+        "x": 1667,
+        "y": 843,
+        "width": 833,
+        "height": 843
+      },
+      "action": {
+        "label": "ตั้งค่า / คู่มือ",
+        "type": "uri",
+        "uri": "https://liff.line.me/2011757736-kSqCYyU0?view=guide"
+      }
+    }
+  ],
+  "previousDefaultRichMenuId": "richmenu-628694be7e88f4ef2278e7ffdb9ab051",
+  "imageSha256": "c9b1ccf44e4a62a93fb4c1f7567bf1099b84a6210a38996cd1ec1ceb7198f4cc",
+  "verifiedAt": "2026-10-12T13:27:07.437Z",
+  "activatedAt": "2026-10-12T13:56:31.880Z"
+}

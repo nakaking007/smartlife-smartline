@@ -3,6 +3,9 @@ const axios = require('axios');
 const config = require('../config');
 
 const conversations = new Map();
+const conversationTimes = new Map();
+const conversationQueues = new Map();
+const HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
 const VALID_TEXT_PROVIDERS = ['gemini', 'groq', 'openrouter', 'huggingface', 'pollinations', 'ollama'];
 const COMMON_TRANSLATIONS = new Map([
   ['ฉันรักเธอ', 'I love you'],
@@ -14,6 +17,11 @@ const COMMON_TRANSLATIONS = new Map([
 const SYSTEM_PROMPT = [
   'You are SmartLife AI inside a LINE bot for a Thai user.',
   'Reply primarily in Thai unless the user asks for another language.',
+  'Speak natural, warm Thai like a helpful conversation partner. Answer the actual question first; avoid repeated formal greetings, boilerplate, and unnecessary menus.',
+  'When using Thai polite endings, consistently use ค่ะ or คะ as grammatically appropriate. Never output combined placeholders such as ครับ/ค่ะ. Prefer simple everyday words to formal expressions.',
+  'Use previous turns to understand short follow-up questions. Do not ask for information already provided. Ask at most one focused clarification when it materially changes the answer.',
+  'Match the user tone and desired detail. For everyday chat use short connected paragraphs; use lists only for steps or comparisons. Avoid excessive emojis and robotic sign-offs.',
+  'Acknowledge feelings without pretending to be human or claiming experiences. If uncertain, say what is uncertain and offer a useful next step.',
   'Be practical, concise, and honest. Do not invent current facts, prices, laws, medical claims, or emergency details.',
   'The app has deterministic appointment tools. Do not claim you created, edited, or deleted an appointment by yourself.',
   'Only mention appointment tools when the user asks about appointments, schedules, reminders, editing, or deleting appointments.',
@@ -102,7 +110,11 @@ function getHistory(userId) {
     return [];
   }
 
-  return conversations.get(userId) || [];
+  if (Date.now() - (conversationTimes.get(userId) || 0) > HISTORY_TTL_MS) {
+    conversations.delete(userId);
+    conversationTimes.delete(userId);
+  }
+  return (conversations.get(userId) || []).map(item => ({ ...item }));
 }
 
 function rememberTurn(userId, userText, assistantText) {
@@ -113,7 +125,15 @@ function rememberTurn(userId, userText, assistantText) {
   const history = getHistory(userId);
   history.push({ role: 'user', content: userText });
   history.push({ role: 'assistant', content: assistantText });
-  conversations.set(userId, history.slice(-Math.max(config.aiMaxHistory, 2)));
+  const limit = Math.max(2, Math.min(40, Math.floor(config.aiMaxHistory / 2) * 2));
+  conversations.delete(userId);
+  conversations.set(userId, history.slice(-limit));
+  conversationTimes.set(userId, Date.now());
+  if (conversations.size > 1000) {
+    const oldest = conversations.keys().next().value;
+    conversations.delete(oldest);
+    conversationTimes.delete(oldest);
+  }
 }
 
 function toOpenAiMessages(history, userText, systemPrompt = SYSTEM_PROMPT) {
@@ -234,7 +254,7 @@ async function chatWithHuggingFace(userText, history, systemPrompt) {
 
 async function chatWithPollinations(userText, history, systemPrompt, options = {}) {
   if (!config.pollinationsApiKey) {
-    const shouldTranslateRoundTrip = options.translateThaiRoundTrip !== false && hasThaiText(userText);
+    const shouldTranslateRoundTrip = options.translateThaiRoundTrip === true && hasThaiText(userText);
     let promptUserText = userText;
 
     if (shouldTranslateRoundTrip) {
@@ -247,7 +267,8 @@ async function chatWithPollinations(userText, history, systemPrompt, options = {
 
     const legacySystemPrompt = [
       'You are SmartLife AI in a LINE bot.',
-      'Answer the user actual question in simple English.',
+      systemPrompt,
+      'Answer directly in the language requested by the user; preserve conversation context.',
       'Be practical and concise.',
       'Do not talk about appointments unless the user asks about appointments or reminders.',
       'For medical, legal, financial, or disaster topics, be careful and say when official sources should be checked.'
@@ -255,12 +276,12 @@ async function chatWithPollinations(userText, history, systemPrompt, options = {
     const legacyPrompt = [
       legacySystemPrompt,
       '',
-      ...history.slice(-6).map(item => (
+      history.slice(-6).map(item => (
         `${item.role === 'assistant' ? 'Assistant' : 'User'}: ${item.content}`
-      )),
+      )).join('\n').slice(-1000),
       `User: ${promptUserText}`,
       'Assistant:'
-    ].join('\n').slice(0, 3500);
+    ].join('\n');
     const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(legacyPrompt)}`, {
       params: {
         model: config.pollinationsTextModel || 'openai'
@@ -374,10 +395,25 @@ async function generateText(userText, options = {}) {
 }
 
 async function chat(userText, userId) {
-  const history = getHistory(userId);
-  const answer = await generateText(userText, { history });
-  rememberTurn(userId, userText, answer);
-  return answer;
+  const run = async () => {
+    const history = getHistory(userId);
+    const answer = await generateText(userText, { history });
+    rememberTurn(userId, userText, answer);
+    return answer;
+  };
+  if (!userId) return run();
+  const previous = conversationQueues.get(userId) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(run);
+  conversationQueues.set(userId, pending);
+  try { return await pending; }
+  finally { if (conversationQueues.get(userId) === pending) conversationQueues.delete(userId); }
+}
+
+async function resetConversation(userId) {
+  if (!userId) return;
+  await (conversationQueues.get(userId) || Promise.resolve()).catch(() => {});
+  conversations.delete(userId);
+  conversationTimes.delete(userId);
 }
 
 function detectTranslationPair(text) {
@@ -495,6 +531,7 @@ function getStatus() {
 
 module.exports = {
   chat,
+  resetConversation,
   translate,
   translateWithMyMemory,
   translateWithMyMemoryRaw,

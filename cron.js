@@ -589,12 +589,12 @@ async function syncLiveDisasterAlerts({ force = false } = {}) {
     }
 
     lastLiveDisasterSyncAt = now.getTime();
-    await earthquakeWarnings.syncEarthquakeWarnings({ now });
     const sourceResults = await Promise.allSettled([
+      earthquakeWarnings.syncEarthquakeWarnings({ now }),
       liveDisasters.fetchLiveDisasterAlertCandidates(now),
       thaiSafetyAlerts.fetchThaiOfficialSafetyAlertCandidates(now)
     ]);
-    const candidates = sourceResults.flatMap(result => result.status === 'fulfilled' ? result.value : []);
+    const candidates = sourceResults.flatMap(result => result.status === 'fulfilled' && Array.isArray(result.value) ? result.value : []);
     sourceResults.filter(result => result.status === 'rejected').forEach(result => {
       console.error('SmartLife disaster source error:', result.reason.message);
     });
@@ -603,6 +603,10 @@ async function syncLiveDisasterAlerts({ force = false } = {}) {
     for (const candidate of candidates) {
       const { externalId, ...fields } = candidate;
       if (!externalId) {
+        continue;
+      }
+      if (candidate.active === false) {
+        await Alert.updateOne({ externalId }, { $set: fields });
         continue;
       }
 

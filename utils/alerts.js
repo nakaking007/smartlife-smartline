@@ -114,7 +114,7 @@ function buildAsiaEarthquakeScopeQuery() {
 function buildAlertScopeQuery() {
   return {
     $or: [
-      { $and: [{ type: { $in: EARTHQUAKE_TYPES } }, buildAsiaEarthquakeScopeQuery()] },
+      { $and: [{ type: { $in: EARTHQUAKE_TYPES } }, { $or: [buildAsiaEarthquakeScopeQuery(), { $and: [{ externalId: /^tmd-cap:/ }, buildThailandScopeQuery()] }] }] },
       { $and: [{ type: { $in: [...STORM_TYPES, ...TSUNAMI_TYPES] } }, buildAseanScopeQuery()] },
       { $and: [{ type: { $nin: ASEAN_ALERT_TYPES } }, buildThailandScopeQuery()] },
       { $and: [{ type: { $exists: false } }, buildThailandScopeQuery()] }
@@ -153,6 +153,7 @@ function buildActiveAlertQuery(now = new Date(), extraQuery = {}) {
     active: true,
     ...query,
     $and: [
+      { $or: [{ startsAt: { $exists: false } }, { startsAt: null }, { startsAt: { $lte: now } }] },
       {
         $or: [
           { severity: { $in: URGENT_SEVERITIES } },
@@ -187,6 +188,7 @@ async function listActiveAlertsByTypes(types, now = new Date(), limit = 10) {
     active: true,
     type: { $in: types },
     $and: [
+      { $or: [{ startsAt: { $exists: false } }, { startsAt: null }, { startsAt: { $lte: now } }] },
       {
         $or: [
           { expiresAt: { $exists: false } },
@@ -541,24 +543,33 @@ function formatGenericAlert(data) {
     ภัยพิบัติ: 'ภัยพิบัติ',
     น้ำท่วม: 'น้ำท่วม',
     public_safety: 'ความปลอดภัยสาธารณะ/เหตุความไม่สงบ',
-    severe_accident: 'อุบัติภัยหรืออุบัติเหตุร้ายแรง'
+    severe_accident: 'อุบัติภัยหรืออุบัติเหตุร้ายแรง',
+    air_quality: 'คุณภาพอากาศ / PM2.5',
+    storm: 'ฝนหนัก / พายุ',
+    earthquake: 'แผ่นดินไหว',
+    tsunami: 'สึนามิ'
   }[data.type] || data.type || '-';
 
   return [
-    'เรียน นายท่าน รายงานภัยธรรมชาติค่ะ',
+    'รายงานเตือนภัยและเฝ้าระวัง',
     `หัวข้อ: ${data.title || '-'}`,
     `ประเภท: ${typeLabel}`,
     `พื้นที่/ตำแหน่ง: ${getAlertLocation(data)}`,
     `ระดับ: ${data.severity || '-'}`,
+    data.message || null,
+    data.instruction ? `คำแนะนำจากหน่วยงาน: ${data.instruction}` : null,
     formatDistanceFromBangkok(data),
     getExplicitObservation(data) ? `อาการที่รับรู้ได้: ${getExplicitObservation(data)}` : null,
     formatAlertTimeLine(data),
+    data.effectiveAt ? `มีผลตั้งแต่: ${formatBangkokDateTime(new Date(data.effectiveAt))}` : null,
+    data.expiresAt ? `มีผลถึง: ${formatBangkokDateTime(new Date(data.expiresAt))}` : null,
     formatSourceLine(data)
   ].filter(Boolean).join('\n');
 }
 
 function formatAlert(alert) {
   const data = toPlainObject(alert);
+  if (String(data.externalId || '').startsWith('tmd-cap:')) return formatGenericAlert(data);
 
   if (hasType(data, EARTHQUAKE_TYPES)) {
     return formatEarthquakeAlert(data);

@@ -20,6 +20,7 @@ const earthquakeWarnings = require('../utils/earthquakeWarnings');
 const speech = require('../utils/speech');
 const writing = require('../utils/writing');
 const thaiSafetyAlerts = require('../utils/thaiSafetyAlerts');
+const lineRecipient = require('../utils/lineRecipient');
 const lineAuth = require('../middleware/lineAuth');
 const lineWebhook = require('../middleware/lineWebhook');
 const richMenu = require('../scripts/setup-rich-menu');
@@ -542,9 +543,84 @@ function testThaiOfficialSafetyClassification() {
   assert.strictEqual(thaiSafetyAlerts.isOfficialUrl('https://www.disaster.go.th/home'), true);
   assert.strictEqual(thaiSafetyAlerts.isOfficialUrl('https://example.com/fake'), false);
   const svg = richMenu.buildSvg();
-  assertIncludes(svg, 'ภัยเตือน');
+  assertIncludes(svg, 'เตือนภัย');
   assertIncludes(svg, 'ช่วยเหลือ');
   assertIncludes(shareQr.getAddFriendUrl(), '%40426ovxwj');
+}
+
+function testOfficialAlertLifecycleAndMenu() {
+  const now = new Date('2026-10-12T13:00:00Z');
+  const url = 'https://www.tmd.go.th/uploads/CAP/test.xml';
+  const xml = `<alert><identifier>test-1</identifier><sent>2026-10-12T19:00:00+07:00</sent><status>Actual</status><scope>Public</scope><msgType>Alert</msgType><info><language>th-TH</language><event>Heavy Rain</event><headline>ฝนตกหนัก</headline><severity>Severe</severity><effective>2026-10-12T19:00:00+07:00</effective><expires>2026-10-13T06:00:00+07:00</expires><description>รายละเอียดจากราชการ</description><instruction>คำแนะนำจากราชการ</instruction><area><areaDesc>ชุมพร สงขลา</areaDesc></area></info></alert>`;
+  const [candidate] = thaiSafetyAlerts.capToCandidates(xml, url, now);
+  assert.strictEqual(candidate.type, 'storm');
+  assert.strictEqual(candidate.areaVerified, true);
+  assert.strictEqual(candidate.expiresAt.toISOString(), '2026-10-12T23:00:00.000Z');
+  assertIncludes(alerts.formatAlert(candidate), 'คำแนะนำจากราชการ');
+  assertIncludes(alerts.formatAlert(candidate), 'รายละเอียดจากราชการ');
+  assert.deepStrictEqual(thaiSafetyAlerts.capToCandidates(xml.replace('Actual', 'Test'), url, now), []);
+  assert.deepStrictEqual(thaiSafetyAlerts.capToCandidates(xml, 'https://evil.example/test.xml', now), []);
+  assert.deepStrictEqual(thaiSafetyAlerts.capToCandidates(xml, url, new Date('2026-10-13T00:00:00Z')), []);
+  assert.deepStrictEqual(thaiSafetyAlerts.capToCandidates(xml.replace('2026-10-12T19:00:00+07:00', 'bad-date'), url, now), []);
+  const cancelled = xml.replace('<msgType>Alert</msgType>', '<msgType>Cancel</msgType><references>TMD,test-0,2026-10-12T18:00:00+07:00</references>');
+  assert.strictEqual(thaiSafetyAlerts.capToCandidates(cancelled, url, now)[0].externalId, 'tmd-cap:test-0');
+  assert.strictEqual(thaiSafetyAlerts.capToCandidates(cancelled, url, now)[0].active, false);
+  assert.strictEqual(lineRecipient.matchesAlertProvince('จังหวัดชุมพร', candidate), true);
+  assert.strictEqual(lineRecipient.matchesAlertProvince('เชียงใหม่', candidate), false);
+  assert.strictEqual(lineRecipient.matchesAlertProvince('ชุมพร', { areaText: 'ภาคใต้', areaVerified: true }), true);
+  assert.strictEqual(lineRecipient.matchesAlertPreferences({ alertPreferences: { airQuality: false } }, { type: 'air_quality' }), false);
+  assert.strictEqual(lineRecipient.matchesAlertPreferences({ alertPreferences: { severeWeather: false } }, candidate), false);
+  assert.strictEqual(lineRecipient.matchesAlertProvince('', candidate), true);
+  assert.strictEqual(lineRecipient.matchesAlertProvince('เชียงใหม่', { areaText: 'ประเทศไทย' }), true);
+  assert.strictEqual(lineRecipient.matchesAlertProvince('กรุงเทพมหานคร', { areaVerified: true, areaText: 'กรุงเทพฯ' }), true);
+  const station = { stationID: 'test', nameTH: 'สถานีทดสอบ', areaTH: 'จ.ชุมพร', AQILast: { date: '2026-10-12', time: '19:00', PM25: { value: '65', aqi: '150' } } };
+  assert.strictEqual(thaiSafetyAlerts.airStationToCandidate(station, now).type, 'air_quality');
+  assert.strictEqual(thaiSafetyAlerts.airStationToCandidate(station, new Date('2026-10-12T20:00:00Z')), null);
+  assert.strictEqual(thaiSafetyAlerts.airStationToCandidate({ ...station, AQILast: { ...station.AQILast, PM25: { value: '20', aqi: '40' } } }, now), null);
+  assert.strictEqual(thaiSafetyAlerts.articleToCandidate({ title: 'น้ำท่วม', url: 'https://www.disaster.go.th/test', seendate: 'invalid' }, now), null);
+  const areas = richMenu.buildAreas('https://liff.line.me/test');
+  assert.strictEqual(areas.length, 6);
+  assert.strictEqual(areas.filter(area => area.action.label === 'เตือนภัย').length, 1);
+  assert.strictEqual(areas[3].action.text, 'คุยกับ AI');
+  assertIncludes(areas[2].action.uri, 'view=alerts');
+  for (const row of [areas.slice(0, 3), areas.slice(3)]) {
+    assert.strictEqual(row.reduce((total, area) => total + area.bounds.width, 0), 2500);
+    assert.strictEqual(row[1].bounds.x, row[0].bounds.width);
+    assert.strictEqual(row[2].bounds.x, row[0].bounds.width + row[1].bounds.width);
+  }
+}
+
+async function testNaturalChatContextIsolationAndReset() {
+  const previousProvider = config.aiProvider;
+  const previousBaseUrl = config.ollamaBaseUrl;
+  const previousModel = config.ollamaModel;
+  const previousPost = axios.post;
+  const captured = [];
+  config.aiProvider = 'ollama';
+  config.ollamaBaseUrl = 'http://localhost:11434';
+  config.ollamaModel = 'test';
+  axios.post = async (url, body) => {
+    captured.push(body.messages);
+    return { data: { message: { content: 'คำตอบทดสอบ' } } };
+  };
+  try {
+    await ai.resetConversation('chat-test-a');
+    await ai.resetConversation('chat-test-b');
+    await Promise.all([ai.chat('ฉันอยู่ชุมพร', 'chat-test-a'), ai.chat('แล้วพรุ่งนี้ล่ะ', 'chat-test-a')]);
+    assertIncludes(captured[1].map(item => item.content).join('\n'), 'ฉันอยู่ชุมพร');
+    await ai.chat('สวัสดี', 'chat-test-b');
+    assert.strictEqual(captured[2].some(item => item.content === 'ฉันอยู่ชุมพร'), false);
+    await ai.resetConversation('chat-test-a');
+    await ai.chat('เรื่องใหม่', 'chat-test-a');
+    assert.strictEqual(captured[3].some(item => item.content === 'ฉันอยู่ชุมพร'), false);
+  } finally {
+    axios.post = previousPost;
+    config.aiProvider = previousProvider;
+    config.ollamaBaseUrl = previousBaseUrl;
+    config.ollamaModel = previousModel;
+    await ai.resetConversation('chat-test-a');
+    await ai.resetConversation('chat-test-b');
+  }
 }
 
 async function run() {
@@ -571,6 +647,8 @@ async function run() {
   await testLineIdTokenVerification();
   testLineWebhookSignatureVerification();
   testThaiOfficialSafetyClassification();
+  testOfficialAlertLifecycleAndMenu();
+  await testNaturalChatContextIsolationAndReset();
   console.log('SmartLife smoke tests passed');
 }
 

@@ -435,7 +435,7 @@ function buildChatPromptMessage(userId) {
     title: 'ตอบคำถาม AI',
     available: status.textAiConfigured,
     detail: status.textAiConfigured
-      ? 'พิมพ์คำถามมาได้เลย ระบบจะส่งต่อให้สมอง AI ฟรี/สำรองที่ตั้งค่าไว้ ถ้าจะกลับเมนูหลัก พิมพ์ เมนู'
+      ? 'คุยหรือถามเรื่องที่อยากรู้ได้เลยค่ะ ถามต่อจากเรื่องเดิมได้ หรือพิมพ์ เริ่มคุยใหม่ เพื่อเริ่มเรื่องใหม่ ถ้าต้องการกลับ พิมพ์ เมนู'
       : 'ไม่มี provider ถามตอบที่พร้อมใช้',
     command: '/คำถามอื่น',
     actionLabel: 'ถามต่อ'
@@ -1309,6 +1309,13 @@ async function handleTextMessage(event) {
   const text = event.message.text.trim();
   const userId = event.source && event.source.userId;
   const command = normalizeCommand(text);
+
+  if (text === 'เริ่มคุยใหม่') {
+    await ai.resetConversation(userId);
+    if (userId) pendingModes.set(userId, 'chat');
+    await line.reply(event.replyToken, 'เริ่มเรื่องใหม่แล้วค่ะ อยากคุยหรือถามเรื่องอะไรได้เลย');
+    return true;
+  }
 
   if (text === '/' || command === '') {
     if (userId) {

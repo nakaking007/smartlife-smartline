@@ -21,6 +21,7 @@ router.get('/me', asyncRoute(async (req, res) => {
     alertPreferences: saved?.alertPreferences || {
       disaster: true,
       severeWeather: true,
+      airQuality: true,
       publicSafety: true,
       severeAccident: true
     }
@@ -43,17 +44,21 @@ router.get('/dashboard', asyncRoute(async (req, res) => {
     alerts.listActiveUrgentAlerts(new Date()),
     weather.getReport().catch(() => null)
   ]);
+  const profile = await lineRecipient.getLineRecipient(req.lineUserId);
   res.json({
     appointments: appointmentItems,
     todos: todoItems,
-    alerts: activeAlerts.slice(0, 8),
+    alerts: activeAlerts.filter(item => lineRecipient.matchesAlertPreferences(profile, item)).slice(0, 8),
     weather: weatherResult
   });
 }));
 
 router.get('/alerts', asyncRoute(async (req, res) => {
-  const items = await alerts.listActiveUrgentAlerts(new Date());
-  res.json(items.slice(0, 50));
+  const [items, profile] = await Promise.all([
+    alerts.listActiveUrgentAlerts(new Date(), 50),
+    lineRecipient.getLineRecipient(req.lineUserId)
+  ]);
+  res.json(items.filter(item => lineRecipient.matchesAlertPreferences(profile, item)));
 }));
 
 router.get('/emergency', (req, res) => {
