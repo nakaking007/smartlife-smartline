@@ -12,6 +12,8 @@ services:
         value: 22
       - key: TZ
         value: Asia/Bangkok
+      - key: SMARTLIFE_NOTIFICATION_MODE
+        value: morning-only
       - key: MONGODB_URI
         sync: false
       - key: MONGODB_DNS_SERVERS

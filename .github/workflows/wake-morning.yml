@@ -14,7 +14,7 @@ jobs:
     steps:
       - name: Check SmartLife health
         run: curl --fail --silent --show-error --max-time 90 --retry 2 --retry-delay 10 --retry-connrefused https://smartlife-smartline2.onrender.com/health
-      - name: Run morning report and disaster catch-up
+      - name: Run quota-aware morning catch-up
         if: github.event_name == 'workflow_dispatch' || github.event.schedule == '1,6,11 23 * * *'
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

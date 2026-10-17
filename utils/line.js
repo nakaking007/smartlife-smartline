@@ -3,7 +3,7 @@ const { messagingApi } = require('@line/bot-sdk');
 const axios = require('axios');
 const crypto = require('crypto');
 const config = require('../config');
-const { formatBangkokDateTime } = require('./time');
+const { formatBangkokDateTime, getBangkokDateKey } = require('./time');
 const { formatHours } = require('./riskAssessment');
 
 const client = new messagingApi.MessagingApiClient({
@@ -305,7 +305,41 @@ function buildTodoMorningText(todoSummary = {}) {
   return lines.join('\n');
 }
 
+function buildMorningDigestText(weather = {}, events = [], todoSummary = {}, reportDate = new Date()) {
+  const label = value => String(value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 100);
+  const weatherParts = [];
+  if (Number.isFinite(weather.tempMax)) weatherParts.push(`สูงสุด ${weather.tempMax}°C`);
+  if (Number.isFinite(weather.rainChance)) weatherParts.push(`ฝน ${weather.rainChance}%`);
+  if (Number.isFinite(weather.pm25)) weatherParts.push(`PM2.5 ${weather.pm25} µg/m³`);
+  const lines = [
+    `SmartLife เช้า ${getBangkokDateKey(reportDate)}`,
+    weatherParts.length ? `อากาศ: ${weatherParts.join(' · ')}` : 'อากาศ: ยังดึงข้อมูลไม่ได้',
+  ];
+  const todayEvents = Array.isArray(events) ? events : [];
+  if (todayEvents.length) {
+    lines.push('นัดหมายวันนี้:');
+    todayEvents.slice(0, 3).forEach(event => lines.push(`• ${label(event.start)} ${label(event.summary)}`));
+    if (todayEvents.length > 3) lines.push(`และอีก ${todayEvents.length - 3} นัด — ดูเมนูวันนี้`);
+  } else {
+    lines.push('ไม่มีนัดหมายวันนี้');
+  }
+  const tasks = (Array.isArray(todoSummary.today) ? [...todoSummary.today] : [])
+    .sort((a, b) => Number(b.priority === 'high') - Number(a.priority === 'high'));
+  if (tasks.length) {
+    lines.push(`งานวันนี้: ${tasks.slice(0, 3).map(task => label(task.title)).join(' / ')}`);
+    if (tasks.length > 3) lines.push(`และอีก ${tasks.length - 3} งาน — ดูเมนูวันนี้`);
+  }
+  if (weatherParts.length && weather.source && weather.source !== 'fallback') {
+    const observed = new Date(weather.observedAt);
+    lines.push(`ที่มา: ${label(weather.source)}${Number.isNaN(observed.getTime()) ? '' : ` · ${formatBangkokDateTime(observed)}`}`);
+  }
+  return lines.join('\n');
+}
+
 async function sendMorningGreeting(weather, events, todoSummary = {}, to, options = {}) {
+  if (options.compact) {
+    return pushMessage(buildMorningDigestText(weather, events, todoSummary, options.reportDate), to, options);
+  }
   let eventText = "📋 ตารางงานวันนี้:\n";
 
   if (events.length === 0) {
@@ -356,5 +390,6 @@ module.exports = {
   sendAppointmentReminder,
   sendMorningGreeting,
   createTextMessages,
-  buildTodoMorningText
+  buildTodoMorningText,
+  buildMorningDigestText
 };

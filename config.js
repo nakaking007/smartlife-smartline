@@ -11,6 +11,8 @@ module.exports = {
   liffId: process.env.LIFF_ID || '2011757736-kSqCYyU0',
   lineOfficialAccountId: process.env.LINE_OFFICIAL_ACCOUNT_ID || '@426ovxwj',
   cronSecret: process.env.CRON_SECRET,
+  // Opt in explicitly to legacy extra pushes; the default protects the free LINE quota.
+  notificationMode: process.env.SMARTLIFE_NOTIFICATION_MODE === 'all' ? 'all' : 'morning-only',
   aiProvider: process.env.AI_PROVIDER || 'auto',
   aiFallbackProviders: process.env.AI_FALLBACK_PROVIDERS || 'gemini,groq,openrouter,huggingface,pollinations',
   aiModel: process.env.AI_MODEL,

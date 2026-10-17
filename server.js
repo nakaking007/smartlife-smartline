@@ -102,6 +102,11 @@ app.get('/health', (req, res) => {
     timezone: THAILAND_TIME_ZONE,
     thailandTime: formatBangkokDateTime(new Date()),
     mongo: mongoStates[mongoReadyState] || 'unknown',
+    notifications: {
+      mode: config.notificationMode,
+      morningTime: '06:00',
+      monthlyMessageCap: 300
+    },
     line: {
       accessTokenConfigured: Boolean(config.lineAccessToken),
       userIdConfigured: Boolean(config.lineUserId),
@@ -139,8 +144,10 @@ app.post('/cron/morning-catchup', async (req, res) => {
 
   try {
     const sent = await cronJobs.sendDailyMorningReport(new Date());
-    await cronJobs.syncLiveDisasterAlerts({ force: true });
-    await cronJobs.sendUrgentAlerts();
+    if (config.notificationMode === 'all') {
+      await cronJobs.syncLiveDisasterAlerts({ force: true });
+      await cronJobs.sendUrgentAlerts();
+    }
     res.json({ status: 'ok', morningSent: sent });
   } catch (err) {
     console.error('SmartLife morning catch-up endpoint error:', err);

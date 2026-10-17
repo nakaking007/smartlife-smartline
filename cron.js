@@ -14,6 +14,7 @@ const thaiSafetyAlerts = require('./utils/thaiSafetyAlerts');
 const earthquakeWarnings = require('./utils/earthquakeWarnings');
 const line = require('./utils/line');
 const lineRecipient = require('./utils/lineRecipient');
+const morningBudget = require('./utils/morningBudget');
 const { THAILAND_TIME_ZONE, formatBangkokDateTime, formatBangkokTime, getBangkokDateKey } = require('./utils/time');
 
 const LIVE_DISASTER_SYNC_INTERVAL_MS = 2 * 60 * 1000;
@@ -94,11 +95,14 @@ function getItemRecipient(item) {
   return lineRecipient.isValidLineUserId(recipient) ? String(recipient).trim() : null;
 }
 
-async function sendMorningReport(baseDate = new Date()) {
+async function sendMorningReport(baseDate = new Date(), selectedRecipients = null) {
   try {
     const dateKey = getBangkokDateKey(baseDate);
+    const recipients = selectedRecipients || (await morningBudget.checkMorningBudget(
+      await getActiveLineRecipients({ morningReportOnly: true }), baseDate
+    )).recipients;
+    if (!recipients.length) return false;
     const report = await getWeatherReport();
-    const recipients = await getActiveLineRecipients({ morningReportOnly: true });
     let sentCount = 0;
 
     for (const recipient of recipients) {
@@ -141,7 +145,9 @@ async function sendMorningReport(baseDate = new Date()) {
           source: report.source,
           observedAt: report.observedAt
         }, events, todoSummary, recipient, {
-          retryKey: line.createRetryKey(MORNING_REPORT_JOB, dateKey, recipient)
+          retryKey: line.createRetryKey(MORNING_REPORT_JOB, dateKey, recipient),
+          compact: config.notificationMode !== 'all',
+          reportDate: baseDate
         });
         sentCount += 1;
       } catch (err) {
@@ -159,6 +165,7 @@ async function sendMorningReport(baseDate = new Date()) {
 }
 
 async function sendBedtimeTodoPrompt(baseDate = new Date()) {
+  if (config.notificationMode !== 'all') return false;
   const dateKey = getBangkokDateKey(baseDate);
   let claimed = false;
 
@@ -193,6 +200,7 @@ async function sendBedtimeTodoPrompt(baseDate = new Date()) {
 }
 
 async function sendMorningActiveAlerts(recipients = null) {
+  if (config.notificationMode !== 'all') return 0;
   try {
     const targetRecipients = recipients || await getActiveLineRecipients();
     if (!targetRecipients.length) {
@@ -297,10 +305,13 @@ async function claimCronRun(job, dateKey, baseDate = new Date()) {
     const result = await getCronRunCollection().findOneAndUpdate(
       {
         _id: getCronRunId(job, dateKey),
-        $or: [
-          { status: { $exists: false } },
-          { status: { $nin: ['success', 'running'] } },
-          { status: 'running', lockExpiresAt: { $lte: now } }
+        $and: [
+          { $or: [
+            { status: { $exists: false } },
+            { status: { $nin: ['success', 'running'] } },
+            { status: 'running', lockExpiresAt: { $lte: now } }
+          ] },
+          { $or: [{ nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }] }
         ]
       },
       {
@@ -313,7 +324,8 @@ async function claimCronRun(job, dateKey, baseDate = new Date()) {
         },
         $setOnInsert: {
           createdAt: now
-        }
+        },
+        $unset: { nextAttemptAt: '' }
       },
       {
         upsert: true,
@@ -400,7 +412,22 @@ async function sendDailyMorningReport(baseDate = new Date()) {
       return false;
     }
 
-    const sent = await sendMorningReport(baseDate);
+    const budget = await morningBudget.checkMorningBudget(
+      await getActiveLineRecipients({ morningReportOnly: true }), baseDate
+    );
+    if (!budget.recipients.length) {
+      await getCronRunCollection().updateOne(
+        { _id: getCronRunId(MORNING_REPORT_JOB, dateKey) },
+        { $set: {
+          status: 'deferred', reasonCode: budget.status,
+          nextAttemptAt: morningBudget.nextBudgetCheck(budget.status, baseDate),
+          lockExpiresAt: null, updatedAt: new Date(baseDate)
+        } }
+      );
+      return false;
+    }
+
+    const sent = await sendMorningReport(baseDate, budget.recipients);
     if (!sent) {
       await markCronRunFailed(MORNING_REPORT_JOB, dateKey, new Error('Morning report send failed'));
       return false;
@@ -479,6 +506,7 @@ function buildReminderMessage(appointment, minutesBefore) {
 }
 
 async function sendDueAppointmentReminders() {
+  if (config.notificationMode !== 'all') return;
   try {
     const dueItems = await appointments.findDueReminders();
 
@@ -512,6 +540,7 @@ async function sendDueAppointmentReminders() {
 }
 
 async function sendDueTodoReminders() {
+  if (config.notificationMode !== 'all') return;
   try {
     const reminderItems = await todos.findDueTodoReminders();
 
@@ -560,6 +589,7 @@ async function sendDueTodoReminders() {
 }
 
 async function sendUrgentAlerts() {
+  if (config.notificationMode !== 'all') return;
   try {
     const recipients = await getActiveLineRecipients();
     if (!recipients.length) {
@@ -635,12 +665,15 @@ cron.schedule('0 6 * * *', () => sendDailyMorningReport(), {
   timezone: THAILAND_TIME_ZONE
 });
 
-cron.schedule('30 21 * * *', () => sendBedtimeTodoPrompt(), {
-  timezone: THAILAND_TIME_ZONE
-});
+if (config.notificationMode === 'all') {
+  cron.schedule('30 21 * * *', () => sendBedtimeTodoPrompt(), {
+    timezone: THAILAND_TIME_ZONE
+  });
+}
 
 cron.schedule('* * * * *', async () => {
   await sendMissedMorningReportIfNeeded();
+  if (config.notificationMode !== 'all') return;
   await syncLiveDisasterAlerts();
   await sendDueAppointmentReminders();
   await sendDueTodoReminders();
@@ -655,7 +688,7 @@ setTimeout(() => {
   });
 }, 15000);
 
-setTimeout(async () => {
+if (config.notificationMode === 'all') setTimeout(async () => {
   try {
     await syncLiveDisasterAlerts({ force: true });
     await sendUrgentAlerts();
