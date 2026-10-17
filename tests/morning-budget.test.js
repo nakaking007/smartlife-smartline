@@ -6,6 +6,7 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const budget = require('../utils/morningBudget');
 const { buildMorningDigestText } = require('../utils/line');
+const { selectEssentialAlerts } = require('../utils/essentialAlerts');
 
 const ids = ['U' + '1'.repeat(32), 'U' + '2'.repeat(32)];
 const midMonth = new Date('2026-10-17T06:00:00+07:00');
@@ -121,6 +122,9 @@ test('compact digest does not invent missing weather or appointments', () => {
   assert.ok(text.includes('ไม่มีนัดหมายวันนี้'));
   assert.ok(!text.includes('0°C'));
   assert.ok(!text.includes('ที่มา: fallback'));
+  const unknownDate = buildMorningDigestText({ tempMax: 30, source: 'TEST SOURCE', observedAt: null }, [], {}, midMonth);
+  assert.ok(!unknownDate.includes('2513'));
+  assert.ok(!unknownDate.includes('1970'));
 });
 
 test('compact greeting makes exactly one push containing one text and no cards', async () => {
@@ -168,7 +172,8 @@ function loadCron(mode = 'morning-only', plan = { status: 'ready', recipients: i
     mongoose: { connection: { readyState: 1, collection: () => collection } },
     './config': { notificationMode: mode },
     './utils/morningBudget': { ...budget, checkMorningBudget: async () => { state.budgetCalls++; return plan; } },
-    './utils/lineRecipient': { listActiveLineRecipients: async () => ids },
+    './utils/lineRecipient': { listActiveLineRecipients: async () => ids,
+      getLineRecipient: async () => ({}), matchesAlertPreferences: () => true },
     './utils/line': {
       createRetryKey: (...parts) => parts.join(':'),
       sendMorningGreeting: async (...args) => state.sends.push(args),
@@ -177,7 +182,11 @@ function loadCron(mode = 'morning-only', plan = { status: 'ready', recipients: i
     './utils/weather': { getReport: async () => ({ tempMax: 30, pm25: null, rainChance: null, temp: null }) },
     './utils/appointments': { getToday: async () => [] },
     './utils/todos': { getToday: async () => [] },
-    './utils/alerts': { listUnsentUrgentAlerts: async () => { throw new Error('Unexpected alerts'); } },
+    './utils/alerts': { listActiveUrgentAlerts: async () => [],
+      listUnsentUrgentAlerts: async () => { throw new Error('Unexpected alert push'); } },
+    './utils/liveDisasters': { fetchLiveDisasterAlertCandidates: async () => [] },
+    './utils/thaiSafetyAlerts': { fetchThaiOfficialSafetyAlertCandidates: async () => [] },
+    './utils/earthquakeWarnings': { syncEarthquakeWarnings: async () => [] },
   };
   const mod = { exports: {} };
   vm.runInNewContext(fs.readFileSync(filename, 'utf8'), {
@@ -188,11 +197,11 @@ function loadCron(mode = 'morning-only', plan = { status: 'ready', recipients: i
   return { cron: mod.exports, state };
 }
 
-test('morning-only registers 06:00 and catch-up, without bedtime or disaster startup', () => {
+test('morning-only registers 06:00, catch-up and data refresh without bedtime pushes', () => {
   const { state } = loadCron();
   assert.deepEqual(state.jobs.map(j => j.expression), ['0 6 * * *', '* * * * *']);
   assert.ok(state.jobs.every(j => j.options.timezone === 'Asia/Bangkok'));
-  assert.deepEqual(state.timers.map(t => t.delay), [15000]);
+  assert.deepEqual(state.timers.map(t => t.delay), [15000, 5000]);
 });
 
 test('all mode preserves the opt-in legacy scheduler registrations', () => {
@@ -250,4 +259,34 @@ test('catch-up refuses times before 06:01 and from noon onward', async () => {
   }
   assert.equal(state.sends.length, 0);
   assert.equal(await cron.sendMissedMorningReportIfNeeded(new Date('2026-10-17T06:01:00+07:00')), true);
+});
+
+test('essential alerts exclude watch, inactive, unrelated and opted-out records', () => {
+  const selected = selectEssentialAlerts([
+    { type: 'earthquake', severity: 'watch', title: 'watch' },
+    { type: 'storm', severity: 'warning', active: false, title: 'expired' },
+    { type: 'air_quality', severity: 'warning', title: 'other type' },
+    { type: 'storm', severity: 'warning', title: 'opted out' },
+    { type: 'severe_accident', severity: 'warning', title: 'TEST NEWS', category: 'ข่าวเฝ้าระวังจากเว็บไซต์หน่วยงานราชการ' },
+    { type: 'earthquake', severity: 'critical', title: 'TEST IMPORTANT' },
+  ], alert => alert.title !== 'opted out');
+  assert.deepEqual(selected.map(item => item.title), ['TEST IMPORTANT', 'TEST NEWS']);
+  assert.equal(selected[1].isIndexedNews, true);
+});
+
+test('essential alert summary is limited to three and remains in a single compact text', () => {
+  const selected = selectEssentialAlerts(Array.from({ length: 8 }, (_, i) => ({
+    type: 'storm', severity: 'warning', title: `TEST NOTICE ${i}`, source: 'TEST SOURCE',
+  })));
+  assert.equal(selected.length, 3);
+  const text = buildMorningDigestText({}, [], {}, midMonth, selected);
+  assert.ok(text.includes('ประกาศสำคัญ:'));
+  assert.ok(!text.includes('TEST NOTICE 3'));
+  assert.ok(text.length < 4500);
+});
+
+test('background data refresh does not send notifications in morning-only mode', async () => {
+  const { state } = loadCron();
+  await state.timers.find(timer => timer.delay === 5000).callback();
+  assert.equal(state.sends.length, 0);
 });

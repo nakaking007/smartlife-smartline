@@ -15,9 +15,10 @@ const earthquakeWarnings = require('./utils/earthquakeWarnings');
 const line = require('./utils/line');
 const lineRecipient = require('./utils/lineRecipient');
 const morningBudget = require('./utils/morningBudget');
+const { selectEssentialAlerts } = require('./utils/essentialAlerts');
 const { THAILAND_TIME_ZONE, formatBangkokDateTime, formatBangkokTime, getBangkokDateKey } = require('./utils/time');
 
-const LIVE_DISASTER_SYNC_INTERVAL_MS = 2 * 60 * 1000;
+const LIVE_DISASTER_SYNC_INTERVAL_MS = (config.notificationMode === 'all' ? 2 : 15) * 60 * 1000;
 const MORNING_REPORT_JOB = 'morning-report';
 const BEDTIME_TODO_PROMPT_JOB = 'bedtime-todo-prompt';
 const MORNING_REPORT_CATCH_UP_END_HOUR = 12;
@@ -102,6 +103,8 @@ async function sendMorningReport(baseDate = new Date(), selectedRecipients = nul
       await getActiveLineRecipients({ morningReportOnly: true }), baseDate
     )).recipients;
     if (!recipients.length) return false;
+    await syncLiveDisasterAlerts();
+    const activeAlerts = await alerts.listActiveUrgentAlerts(baseDate, 50);
     const report = await getWeatherReport();
     let sentCount = 0;
 
@@ -109,6 +112,9 @@ async function sendMorningReport(baseDate = new Date(), selectedRecipients = nul
       try {
         const appointmentsToday = await appointments.getToday(baseDate, { lineUserId: recipient });
         const todosToday = await todos.getToday(baseDate, { lineUserId: recipient });
+        const profile = await lineRecipient.getLineRecipient(recipient);
+        const essentialAlerts = selectEssentialAlerts(activeAlerts,
+          alert => lineRecipient.matchesAlertPreferences(profile, alert));
         const events = appointmentsToday.map(item => ({
           eventId: item._id,
           summary: item.title || '-',
@@ -143,11 +149,15 @@ async function sendMorningReport(baseDate = new Date(), selectedRecipients = nul
           pm25Assessment: report.pm25Assessment,
           healthAdvice: buildHealthAdvice(report),
           source: report.source,
+          sourceUrl: report.sourceUrl,
+          licenseUrl: report.licenseUrl,
+          dataKind: report.dataKind,
           observedAt: report.observedAt
         }, events, todoSummary, recipient, {
           retryKey: line.createRetryKey(MORNING_REPORT_JOB, dateKey, recipient),
           compact: config.notificationMode !== 'all',
-          reportDate: baseDate
+          reportDate: baseDate,
+          essentialAlerts
         });
         sentCount += 1;
       } catch (err) {
@@ -612,6 +622,7 @@ async function sendUrgentAlerts() {
 
 async function syncLiveDisasterAlerts({ force = false } = {}) {
   try {
+    if (mongoose.connection.readyState !== 1) return 0;
     const now = new Date();
 
     if (!force && now.getTime() - lastLiveDisasterSyncAt < LIVE_DISASTER_SYNC_INTERVAL_MS) {
@@ -673,8 +684,8 @@ if (config.notificationMode === 'all') {
 
 cron.schedule('* * * * *', async () => {
   await sendMissedMorningReportIfNeeded();
-  if (config.notificationMode !== 'all') return;
   await syncLiveDisasterAlerts();
+  if (config.notificationMode !== 'all') return;
   await sendDueAppointmentReminders();
   await sendDueTodoReminders();
   await sendUrgentAlerts();
@@ -688,10 +699,10 @@ setTimeout(() => {
   });
 }, 15000);
 
-if (config.notificationMode === 'all') setTimeout(async () => {
+setTimeout(async () => {
   try {
     await syncLiveDisasterAlerts({ force: true });
-    await sendUrgentAlerts();
+    if (config.notificationMode === 'all') await sendUrgentAlerts();
   } catch (err) {
     console.error("SmartLife startup disaster alert error:", err.message);
   }

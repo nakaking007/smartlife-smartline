@@ -305,7 +305,7 @@ function buildTodoMorningText(todoSummary = {}) {
   return lines.join('\n');
 }
 
-function buildMorningDigestText(weather = {}, events = [], todoSummary = {}, reportDate = new Date()) {
+function buildMorningDigestText(weather = {}, events = [], todoSummary = {}, reportDate = new Date(), essentialAlerts = []) {
   const label = value => String(value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 100);
   const weatherParts = [];
   if (Number.isFinite(weather.tempMax)) weatherParts.push(`สูงสุด ${weather.tempMax}°C`);
@@ -329,16 +329,25 @@ function buildMorningDigestText(weather = {}, events = [], todoSummary = {}, rep
     lines.push(`งานวันนี้: ${tasks.slice(0, 3).map(task => label(task.title)).join(' / ')}`);
     if (tasks.length > 3) lines.push(`และอีก ${tasks.length - 3} งาน — ดูเมนูวันนี้`);
   }
+  if (essentialAlerts.length) {
+    lines.push('ประกาศสำคัญ:');
+    essentialAlerts.slice(0, 3).forEach(alert => lines.push(
+      `• ${alert.isIndexedNews ? 'ข่าวเฝ้าระวัง: ' : ''}${label(alert.title)}${alert.areaText ? ` · ${label(alert.areaText)}` : ''} (${label(alert.source)})`
+    ));
+    lines.push('ดูต้นทางและเวลาประกาศในเมนูเตือนภัย');
+  }
   if (weatherParts.length && weather.source && weather.source !== 'fallback') {
-    const observed = new Date(weather.observedAt);
+    const observed = weather.observedAt ? new Date(weather.observedAt) : new Date(NaN);
     lines.push(`ที่มา: ${label(weather.source)}${Number.isNaN(observed.getTime()) ? '' : ` · ${formatBangkokDateTime(observed)}`}`);
+    if (weather.sourceUrl && /^https:\/\//.test(weather.sourceUrl)) lines.push(weather.sourceUrl);
+    if (weather.licenseUrl && /^https:\/\//.test(weather.licenseUrl)) lines.push(`เครดิต CC BY 4.0: ${weather.licenseUrl}`);
   }
   return lines.join('\n');
 }
 
 async function sendMorningGreeting(weather, events, todoSummary = {}, to, options = {}) {
   if (options.compact) {
-    return pushMessage(buildMorningDigestText(weather, events, todoSummary, options.reportDate), to, options);
+    return pushMessage(buildMorningDigestText(weather, events, todoSummary, options.reportDate, options.essentialAlerts), to, options);
   }
   let eventText = "📋 ตารางงานวันนี้:\n";
 

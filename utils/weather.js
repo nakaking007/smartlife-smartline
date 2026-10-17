@@ -2,6 +2,9 @@
 const axios = require('axios');
 const config = require('../config');
 const assessment = require('./riskAssessment');
+const CACHE_TTL_MS = 10 * 60 * 1000;
+const reportCache = new Map();
+const inFlight = new Map();
 
 const DEFAULT_LOCATION = {
   name: 'Bangkok',
@@ -35,6 +38,7 @@ function normalizeLocation(location = {}) {
 }
 
 function toNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -90,12 +94,19 @@ function getNextRainForecast(forecastData) {
   };
 }
 
-async function getOptionalData(url) {
+async function getOptionalData(url, required = false, options = {}) {
   try {
-    const res = await axios.get(url, { timeout: 15000 });
+    const { onResponse, ...requestOptions } = options;
+    const res = await axios.get(url, {
+      timeout: 6000, signal: AbortSignal.timeout(6500), ...requestOptions
+    });
+    if (onResponse) onResponse(res);
     return res.data;
   } catch (err) {
-    console.error("SmartLife optional weather data error:", err.message);
+    const code = err.response ? `HTTP_${err.response.status}` : (err.code || 'REQUEST_FAILED');
+    // Never log a URL or axios error object: OpenWeather URLs contain API keys.
+    console.warn(`SmartLife weather source error: ${code}`);
+    if (required) throw Object.assign(new Error('Weather source unavailable'), { code });
     return null;
   }
 }
@@ -117,16 +128,16 @@ function parseBangkokApiTime(value) {
 }
 
 function buildAssessedReport(raw) {
-  const heatIndex = assessment.calculateHeatIndex(raw.temp, raw.humidity);
-  const tempAssessment = assessment.assessTemperature(raw.tempMax || raw.temp);
+  const heatIndex = raw.temp === null || raw.humidity === null ? null : assessment.calculateHeatIndex(raw.temp, raw.humidity);
+  const tempAssessment = (raw.tempMax ?? raw.temp) === null ? null : assessment.assessTemperature(raw.tempMax ?? raw.temp);
   const heatIndexAssessment = heatIndex === null ? null : assessment.assessHeatIndex(heatIndex);
-  const rainChanceAssessment = assessment.assessRainChance(raw.rainChance);
-  const rainAmountAssessment = assessment.assessRainAmount(raw.rainMm1h, '1 ชั่วโมงที่ผ่านมา');
-  const nextRainAssessment = raw.nextRainAt
+  const rainChanceAssessment = raw.rainChance === null ? null : assessment.assessRainChance(raw.rainChance);
+  const rainAmountAssessment = raw.rainMm1h === null ? null : assessment.assessRainAmount(raw.rainMm1h, '1 ชั่วโมงที่ผ่านมา');
+  const nextRainAssessment = raw.nextRainAt && raw.nextRainMm3h !== null
     ? assessment.assessRainAmount(raw.nextRainMm3h, '3 ชั่วโมงรอบคาดการณ์')
     : null;
-  const pm25Assessment = assessment.assessPm25(raw.pm25);
-  const stormAssessment = assessment.assessStormWind(raw.windSpeedKph);
+  const pm25Assessment = raw.pm25 === null ? null : assessment.assessPm25(raw.pm25);
+  const stormAssessment = raw.windSpeedKph === null ? null : assessment.assessStormWind(raw.windSpeedKph);
 
   const healthAdvice = [
     tempAssessment && tempAssessment.advice,
@@ -144,7 +155,8 @@ function buildAssessedReport(raw) {
     tempAssessment,
     heatIndexAssessment,
     rainMm1h: raw.rainMm1h,
-    rainLatestText: raw.rainMm1h > 0 ? 'พบฝนในช่วง 1 ชั่วโมงที่ผ่านมา' : 'ยังไม่พบฝนใน 1 ชั่วโมงที่ผ่านมา',
+    rainLatestText: raw.rainMm1h === null ? 'ยังไม่มีข้อมูลฝนย้อนหลัง 1 ชั่วโมง' :
+      (raw.rainMm1h > 0 ? 'พบฝนในช่วง 1 ชั่วโมงที่ผ่านมา' : 'ยังไม่พบฝนใน 1 ชั่วโมงที่ผ่านมา'),
     rainChance: raw.rainChance,
     rainChanceAssessment,
     rainAmountAssessment,
@@ -159,7 +171,11 @@ function buildAssessedReport(raw) {
     stormAssessment,
     healthAdvice,
     source: raw.source,
-    observedAt: raw.observedAt || new Date()
+    observedAt: raw.observedAt || null,
+    dataKind: raw.dataKind || 'weather',
+    sourceUrl: raw.sourceUrl || null,
+    licenseUrl: raw.licenseUrl || null,
+    providerExpiresAt: raw.providerExpiresAt || null
   };
 }
 
@@ -172,12 +188,12 @@ async function getOpenWeatherReport(location) {
   const forecastUrl = `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${config.weatherApiKey}&units=metric`;
 
   const [weatherData, airData, forecastData] = await Promise.all([
-    getOptionalData(weatherUrl),
+    getOptionalData(weatherUrl, true),
     getOptionalData(airUrl),
     getOptionalData(forecastUrl)
   ]);
 
-  if (!weatherData) {
+  if (toNumber(weatherData?.main?.temp) === null) {
     throw new Error('Weather data is unavailable');
   }
 
@@ -211,7 +227,7 @@ async function getOpenWeatherReport(location) {
     pm25: round(pm25),
     windSpeedKph,
     source: 'OpenWeather',
-    observedAt: weatherData.dt ? new Date(weatherData.dt * 1000) : new Date()
+    observedAt: weatherData.dt ? new Date(weatherData.dt * 1000) : null
   });
 }
 
@@ -240,17 +256,14 @@ function getOpenMeteoRainChancePercent(data) {
     return null;
   }
 
-  const maxPop = next12Hours.reduce((max, item) => {
-    const probability = item.precipitationProbability;
-    return probability === null ? max : Math.max(max, probability);
-  }, 0);
-
-  return Math.round(maxPop);
+  const probabilities = next12Hours.map(item => item.precipitationProbability).filter(value => value !== null);
+  return probabilities.length ? Math.round(Math.max(...probabilities)) : null;
 }
 
 function getOpenMeteoNextRainForecast(data) {
   const now = Date.now();
-  const nextRain = getOpenMeteoHourlyItems(data)
+  const hours = getOpenMeteoHourlyItems(data);
+  const nextRain = hours
     .filter(item => item.date.getTime() >= now - 30 * 60 * 1000)
     .find(item => {
       const probability = item.precipitationProbability || 0;
@@ -268,12 +281,16 @@ function getOpenMeteoNextRainForecast(data) {
   }
 
   const nextRainInHours = Math.max(0, (nextRain.date.getTime() - now) / (60 * 60 * 1000));
+  const nextThree = hours.filter(item => item.date >= nextRain.date).slice(0, 3);
+  const amounts = nextThree.map(item => item.rain ?? item.precipitation);
+  const completeThreeHours = amounts.length === 3 && amounts.every(value => value !== null) &&
+    nextThree[2].date.getTime() - nextThree[0].date.getTime() === 2 * 60 * 60 * 1000;
 
   return {
     nextRainAt: nextRain.date,
     nextRainInHours: round(nextRainInHours),
     nextRainChance: nextRain.precipitationProbability === null ? null : Math.round(nextRain.precipitationProbability),
-    nextRainMm3h: round(nextRain.rain !== null ? nextRain.rain : nextRain.precipitation || 0)
+    nextRainMm3h: completeThreeHours ? round(amounts.reduce((sum, value) => sum + value, 0)) : null
   };
 }
 
@@ -314,20 +331,22 @@ async function getOpenMeteoReport(location) {
   });
 
   const [forecastData, airData] = await Promise.all([
-    getOptionalData(`https://api.open-meteo.com/v1/forecast?${forecastParams.toString()}`),
+    getOptionalData(`https://api.open-meteo.com/v1/forecast?${forecastParams.toString()}`, true),
     getOptionalData(`https://air-quality-api.open-meteo.com/v1/air-quality?${airParams.toString()}`)
   ]);
 
-  if (!forecastData || !forecastData.current) {
+  if (toNumber(forecastData?.current?.temperature_2m) === null) {
     throw new Error('Open-Meteo data is unavailable');
   }
 
   const current = forecastData.current || {};
   const nextRain = getOpenMeteoNextRainForecast(forecastData);
-  const rainMm1h = toNumber(current.rain) !== null ? toNumber(current.rain) : toNumber(current.precipitation) || 0;
+  const latestHour = getOpenMeteoHourlyItems(forecastData)
+    .filter(item => item.date.getTime() <= Date.now()).at(-1);
+  const rainMm1h = latestHour ? (latestHour.rain ?? latestHour.precipitation) : null;
   const temp = round(current.temperature_2m);
-  const tempMax = getOpenMeteoTempMax(forecastData) || temp;
-  const observedAt = parseBangkokApiTime(current.time) || new Date();
+  const tempMax = getOpenMeteoTempMax(forecastData) ?? temp;
+  const observedAt = parseBangkokApiTime(current.time);
   const pm25 = airData && airData.current ? round(airData.current.pm2_5) : null;
 
   return buildAssessedReport({
@@ -340,33 +359,92 @@ async function getOpenMeteoReport(location) {
     ...nextRain,
     pm25,
     windSpeedKph: round(current.wind_speed_10m),
-    source: 'Open-Meteo + Open-Meteo Air Quality (ฟรี ไม่ต้องใช้ API key)',
+    source: pm25 === null ? 'Open-Meteo — แบบจำลองพยากรณ์ (ยังไม่มีข้อมูลฝุ่น)' :
+      'Open-Meteo + Open-Meteo Air Quality — แบบจำลองพยากรณ์',
+    sourceUrl: 'https://open-meteo.com/',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
+    dataKind: 'forecast_model',
     observedAt
   });
 }
 
-async function getReport(location = {}) {
-  const normalizedLocation = normalizeLocation(location);
-  let primaryError = null;
+async function getMetNorwayReport(location) {
+  const params = new URLSearchParams({
+    lat: location.latitude.toFixed(4), lon: location.longitude.toFixed(4)
+  });
+  let providerExpiresAt = null;
+  const data = await getOptionalData(
+    `https://api.met.no/weatherapi/locationforecast/2.0/compact?${params}`, true,
+    { headers: { 'User-Agent': 'SmartLife/1.0 https://github.com/nakaking007/smartlife-smartline' },
+      onResponse: response => {
+        const expires = Date.parse(response.headers?.expires);
+        if (Number.isFinite(expires)) providerExpiresAt = expires;
+      }
+    }
+  );
+  const now = Date.now();
+  const rows = (Array.isArray(data?.properties?.timeseries) ? data.properties.timeseries : [])
+    .map(row => ({ ...row, date: new Date(row.time) }))
+    .filter(row => Number.isFinite(row.date.getTime()) && row.date.getTime() >= now - 60 * 60 * 1000);
+  const first = rows[0];
+  const current = first?.data?.instant?.details;
+  if (!current || toNumber(current.air_temperature) === null) {
+    throw new Error('MET Norway data is unavailable');
+  }
+  const temperatures = rows.filter(row => row.date.getTime() <= now + 24 * 60 * 60 * 1000)
+    .map(row => toNumber(row.data?.instant?.details?.air_temperature)).filter(value => value !== null);
+  return buildAssessedReport({
+    locationName: location.name,
+    temp: round(current.air_temperature),
+    tempMax: temperatures.length ? round(Math.max(...temperatures)) : null,
+    humidity: round(current.relative_humidity, 0),
+    // MET forecasts are not observations: do not label future rain as rain in the past hour.
+    rainMm1h: null,
+    rainChance: round(first.data?.next_12_hours?.details?.probability_of_precipitation, 0),
+    nextRainAt: null, nextRainInHours: null, nextRainChance: null, nextRainMm3h: null,
+    pm25: null,
+    windSpeedKph: toNumber(current.wind_speed) === null ? null : round(current.wind_speed * 3.6),
+    observedAt: first.date,
+    dataKind: 'forecast_model',
+    source: 'MET Norway — แบบจำลองพยากรณ์ (ไม่มีข้อมูลฝุ่น/ฝนย้อนหลัง)',
+    sourceUrl: 'https://api.met.no/',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
+    providerExpiresAt
+  });
+}
 
+async function fetchReport(normalizedLocation) {
+  const attempts = [];
+  const providers = [];
   if (config.weatherApiKey) {
+    providers.push(['OpenWeather', getOpenWeatherReport]);
+  }
+  providers.push(['Open-Meteo', getOpenMeteoReport], ['MET Norway', getMetNorwayReport]);
+  for (const [source, fetcher] of providers) {
     try {
-      return await getOpenWeatherReport(normalizedLocation);
+      return await fetcher(normalizedLocation);
     } catch (err) {
-      primaryError = err;
-      console.warn(`SmartLife OpenWeather fallback: ${err.message}`);
+      attempts.push({ source, code: err.code || 'INVALID_RESPONSE' });
     }
   }
+  throw Object.assign(new Error('Weather data is unavailable'), { code: 'WEATHER_UNAVAILABLE', attempts });
+}
 
-  try {
-    return await getOpenMeteoReport(normalizedLocation);
-  } catch (err) {
-    if (primaryError) {
-      throw new Error(`Weather data is unavailable: OpenWeather ${primaryError.message}; Open-Meteo ${err.message}`);
-    }
-
-    throw new Error(`Weather data is unavailable: ${err.message}`);
+async function getReport(location = {}) {
+  const normalized = normalizeLocation(location);
+  const key = `${normalized.latitude.toFixed(4)},${normalized.longitude.toFixed(4)}`;
+  const cached = reportCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return { ...cached.report, locationName: normalized.name };
+  if (!inFlight.has(key)) {
+    const pending = fetchReport(normalized).then(report => {
+      if (reportCache.size >= 50) reportCache.delete(reportCache.keys().next().value);
+      reportCache.set(key, { report, expiresAt: Math.max(Date.now() + CACHE_TTL_MS, report.providerExpiresAt || 0) });
+      return report;
+    }).finally(() => inFlight.delete(key));
+    inFlight.set(key, pending);
   }
+  const report = await inFlight.get(key);
+  return { ...report, locationName: normalized.name };
 }
 
 module.exports = { getReport, normalizeLocation };

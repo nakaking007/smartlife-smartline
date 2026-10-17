@@ -42,14 +42,18 @@ router.get('/dashboard', asyncRoute(async (req, res) => {
     appointments.getToday(new Date(), { lineUserId: req.lineUserId, includeLegacyForAdmin: false }),
     todos.getToday(new Date(), { lineUserId: req.lineUserId }),
     alerts.listActiveUrgentAlerts(new Date()),
-    weather.getReport().catch(() => null)
+    weather.getReport().then(report => ({ report, status: { state: 'available' } }))
+      .catch(err => ({ report: null, status: {
+        state: 'unavailable', code: 'WEATHER_UNAVAILABLE', attempts: err.attempts || []
+      } }))
   ]);
   const profile = await lineRecipient.getLineRecipient(req.lineUserId);
   res.json({
     appointments: appointmentItems,
     todos: todoItems,
     alerts: activeAlerts.filter(item => lineRecipient.matchesAlertPreferences(profile, item)).slice(0, 8),
-    weather: weatherResult
+    weather: weatherResult.report,
+    weatherStatus: weatherResult.status
   });
 }));
 
