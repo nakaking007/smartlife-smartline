@@ -6,6 +6,7 @@ const todos = require('../utils/todos');
 const alerts = require('../utils/alerts');
 const weather = require('../utils/weather');
 const freeServices = require('../utils/freeServices');
+const thaiSafetyAlerts = require('../utils/thaiSafetyAlerts');
 
 const router = express.Router();
 const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -53,7 +54,8 @@ router.get('/dashboard', asyncRoute(async (req, res) => {
     todos: todoItems,
     alerts: activeAlerts.filter(item => lineRecipient.matchesAlertPreferences(profile, item)).slice(0, 8),
     weather: weatherResult.report,
-    weatherStatus: weatherResult.status
+    weatherStatus: weatherResult.status,
+    newsSourceStatus: thaiSafetyAlerts.getOfficialNewsStatus()
   });
 }));
 

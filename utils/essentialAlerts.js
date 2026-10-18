@@ -4,7 +4,7 @@ const RANK = { emergency: 4, critical: 3, urgent: 2, warning: 1 };
 
 function selectEssentialAlerts(alerts, matchesPreferences = () => true) {
   return [...alerts].filter(alert =>
-    alert.active !== false && IMPORTANT.has(String(alert.severity).toLowerCase()) &&
+    alert.active !== false && alert.recordKind !== 'news_report' && IMPORTANT.has(String(alert.severity).toLowerCase()) &&
     TYPES.has(String(alert.type).toLowerCase()) && matchesPreferences(alert)
   ).sort((a, b) =>
     RANK[String(b.severity).toLowerCase()] - RANK[String(a.severity).toLowerCase()]

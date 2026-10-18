@@ -24,6 +24,7 @@ const knowledge = require('./utils/knowledge');
 const scamCheck = require('./utils/scamCheck');
 const todos = require('./utils/todos');
 const earthquakeWarnings = require('./utils/earthquakeWarnings');
+const thaiSafetyAlerts = require('./utils/thaiSafetyAlerts');
 const lineRecipient = require('./utils/lineRecipient');
 const User = require('./models/User');
 const { THAILAND_TIME_ZONE, formatBangkokDateTime, getBangkokDateKey, getBangkokDayRange } = require('./utils/time');
@@ -114,7 +115,8 @@ app.get('/health', (req, res) => {
       webhookSignatureConfigured: Boolean(config.lineChannelSecret),
       liffConfigured: Boolean(config.liffId && config.lineLoginChannelId)
     },
-    ai: ai.getStatus()
+    ai: ai.getStatus(),
+    newsSourceStatus: thaiSafetyAlerts.getOfficialNewsStatus()
   });
 });
 
