@@ -151,7 +151,7 @@ test('compact greeting makes exactly one push containing one text and no cards',
 });
 
 // Isolated cron harness: no real timers, MongoDB, LINE pushes or weather requests.
-function loadCron(mode = 'morning-only', plan = { status: 'ready', recipients: ids }) {
+function loadCron(mode = 'morning-only', plan = { status: 'ready', recipients: ids }, options = {}) {
   const filename = path.resolve(__dirname, '../cron.js');
   const localRequire = createRequire(filename);
   const state = { jobs: [], timers: [], sends: [], budgetCalls: 0, claims: [], run: null };
@@ -179,7 +179,7 @@ function loadCron(mode = 'morning-only', plan = { status: 'ready', recipients: i
       sendMorningGreeting: async (...args) => state.sends.push(args),
       pushMessage: async () => { throw new Error('Unexpected extra push'); },
     },
-    './utils/weather': { getReport: async () => ({ tempMax: 30, pm25: null, rainChance: null, temp: null }) },
+    './utils/weather': { getReport: async () => { if(options.weatherError)throw options.weatherError;return { tempMax: 30, pm25: null, rainChance: null, temp: null }; } },
     './utils/appointments': { getToday: async () => [] },
     './utils/todos': { getToday: async () => [] },
     './utils/alerts': { listActiveUrgentAlerts: async () => [],
@@ -289,4 +289,16 @@ test('background data refresh does not send notifications in morning-only mode',
   const { state } = loadCron();
   await state.timers.find(timer => timer.delay === 5000).callback();
   assert.equal(state.sends.length, 0);
+});
+
+test('morning weather failure preserves unknown rain and observation time', async () => {
+  const { cron, state } = loadCron('morning-only', { status: 'ready', recipients: [ids[0]] },
+    { weatherError: Object.assign(new Error('TEST_SECRET'), { code: 'WEATHER_UNAVAILABLE' }) });
+  await cron.sendDailyMorningReport(midMonth);
+  const weather = state.sends[0][0];
+  assert.equal(weather.tempMax, null);
+  assert.equal(weather.rainMm1h, null);
+  assert.equal(weather.observedAt, null);
+  assert.match(weather.healthAdvice, /ยังไม่มีข้อมูลอากาศเพียงพอ/);
+  assert.ok(!JSON.stringify(weather).includes('TEST_SECRET'));
 });

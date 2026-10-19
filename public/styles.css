@@ -110,6 +110,7 @@ main{max-width:880px;margin:0 auto;padding:14px 16px 20px}
 .hidden{display:none!important}
 .share-qr{display:grid;grid-template-columns:128px 1fr;gap:16px;align-items:center;margin:14px 0;padding:14px;background:#fff;border:1px solid var(--line);border-radius:8px}
 .share-qr img{width:128px;height:128px;object-fit:contain}
+button:disabled,input:disabled,select:disabled{opacity:.6;cursor:wait}
 .share-qr strong,.share-qr span{display:block}
 .share-qr span{color:var(--muted);font-size:13px;margin:3px 0 10px}
 .share-qr a{display:inline-flex;align-items:center;gap:6px;color:var(--green);font-size:13px;font-weight:700;text-decoration:none}

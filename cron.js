@@ -30,21 +30,22 @@ async function getWeatherReport() {
   try {
     return await weather.getReport();
   } catch (err) {
-    console.error("SmartLife weather error:", err.message);
+    console.error('SmartLife weather error:', err.code || 'WEATHER_UNAVAILABLE');
     return {
-      tempMax: '-',
+      tempMax: null,
       temp: null,
       humidity: null,
-      rainMm1h: 0,
+      rainMm1h: null,
       rainChance: null,
       pm25: null,
-      source: 'fallback',
-      observedAt: new Date()
+      source: 'ยังเชื่อมต่อแหล่งข้อมูลอากาศไม่ได้',
+      observedAt: null
     };
   }
 }
 
 function buildHealthAdvice(report) {
+  if (report.observedAt === null) return 'ยังไม่มีข้อมูลอากาศเพียงพอสำหรับคำแนะนำวันนี้';
   const cityAdvice = [];
   const ruralAdvice = [];
 
@@ -169,7 +170,7 @@ async function sendMorningReport(baseDate = new Date(), selectedRecipients = nul
     await sendMorningActiveAlerts(recipients);
     return sentCount > 0;
   } catch (err) {
-    console.error("SmartLife cron error:", err);
+    console.error('SmartLife cron error:', err.code || 'MORNING_REPORT_FAILED');
     return false;
   }
 }

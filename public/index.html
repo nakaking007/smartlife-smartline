@@ -24,6 +24,7 @@
 
   <main id="app" aria-live="polite">
     <div class="system-banner" id="systemBanner">กำลังเชื่อมต่อ LINE...</div>
+    <button id="lineLoginButton" class="button line-button hidden" type="button">เข้าสู่ระบบ LINE ใหม่</button>
 
     <section class="view active" data-view="today">
       <section class="morning-hero" aria-labelledby="heroTitle">
@@ -53,13 +54,13 @@
         <label>ชื่องาน<input name="title" required maxlength="160" placeholder="เช่น ประชุมทีม"></label>
         <div class="form-grid"><label>วันและเวลา<input name="startAt" type="datetime-local" required></label><label>สถานที่<input name="locationName" maxlength="160" placeholder="ระบุสถานที่"></label></div>
         <label>สิ่งที่ต้องเตรียม<input name="preparation" maxlength="300" placeholder="เอกสาร อุปกรณ์ หรือการแต่งกาย"></label>
-        <div class="form-actions"><button class="button secondary hidden" id="cancelAppointmentEdit" type="button">ยกเลิก</button><button class="button primary" type="submit"><i data-lucide="save"></i><span id="appointmentSubmitText">บันทึกนัดหมาย</span></button></div>
+        <div class="form-actions"><button class="button secondary hidden" id="cancelAppointmentEdit" type="button">ยกเลิก</button><button class="button primary" type="submit" disabled><i data-lucide="save"></i><span id="appointmentSubmitText">บันทึกนัดหมาย</span></button></div>
       </form>
       <form id="todoForm" class="editor-form hidden">
         <label>ชื่องาน<input name="title" required maxlength="160" placeholder="เช่น ส่งรายงาน"></label>
         <div class="form-grid"><label>กำหนดเสร็จ<input name="dueAt" type="datetime-local"></label><label>ความสำคัญ<select name="priority"><option value="normal">ปกติ</option><option value="high">สำคัญ</option><option value="urgent">เร่งด่วน</option></select></label></div>
         <label>หมายเหตุ<input name="notes" maxlength="300"></label>
-        <div class="form-actions"><button class="button primary" type="submit"><i data-lucide="plus"></i>เพิ่ม To-do</button></div>
+        <div class="form-actions"><button class="button primary" type="submit" disabled><i data-lucide="plus"></i>เพิ่ม To-do</button></div>
       </form>
       <div id="appointmentList" class="item-list"></div><div id="todoList" class="item-list hidden"></div>
     </section>
@@ -88,7 +89,7 @@
         <p class="privacy-note">จังหวัดใช้กรองประกาศที่มีพื้นที่ระบุชัดเจน ส่วนประกาศที่ไม่ระบุพื้นที่ยังแสดงเพื่อไม่ให้พลาดข่าวสำคัญ ข้อมูลสถานีฝุ่นไม่ได้ครอบคลุมทุกจุดในจังหวัด</p>
         <label class="toggle-row"><span>เหตุความปลอดภัยสาธารณะ</span><input type="checkbox" name="publicSafety" checked></label>
         <label class="toggle-row"><span>อุบัติภัยร้ายแรง</span><input type="checkbox" name="severeAccident" checked></label>
-        <button class="button primary" type="submit"><i data-lucide="shield-check"></i>บันทึกการตั้งค่า</button>
+        <button class="button primary" type="submit" disabled><i data-lucide="shield-check"></i>บันทึกการตั้งค่า</button>
       </form>
       <div class="command-list">
         <h3>คำสั่งที่ใช้บ่อย</h3>
