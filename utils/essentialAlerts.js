@@ -9,6 +9,7 @@ function selectEssentialAlerts(alerts, matchesPreferences = () => true) {
   ).sort((a, b) =>
     RANK[String(b.severity).toLowerCase()] - RANK[String(a.severity).toLowerCase()]
   ).slice(0, 3).map(alert => ({
+    type: alert.type,
     title: alert.title || alert.type,
     areaText: alert.areaText || '',
     source: alert.source || '',

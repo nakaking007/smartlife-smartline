@@ -110,8 +110,10 @@ test('compact digest contains essentials, prioritizes important tasks and stays 
   }, midMonth);
   assert.ok(text.includes('SmartLife เช้า 2026-10-17'));
   assert.ok(text.includes('สูงสุด 32°C'));
-  assert.ok(text.includes('และอีก 4 นัด'));
+  assert.ok(text.includes('อีก 4 นัดหมาย'));
   assert.ok(text.indexOf('งานสำคัญ') < text.indexOf('งานทั่วไป'));
+  assert.ok(text.includes('ต้องทำ:'));
+  assert.ok(!text.includes('จะลงบันทึก'));
   assert.ok(text.length < 4500);
   assert.ok(!text.includes('ดัชนีความร้อน'));
 });
@@ -119,7 +121,8 @@ test('compact digest contains essentials, prioritizes important tasks and stays 
 test('compact digest does not invent missing weather or appointments', () => {
   const text = buildMorningDigestText({ source: 'fallback' }, [], {}, midMonth);
   assert.ok(text.includes('ยังดึงข้อมูลไม่ได้'));
-  assert.ok(text.includes('ไม่มีนัดหมายวันนี้'));
+  assert.ok(!text.includes('ต้องทำ:'));
+  assert.ok(!text.includes('เตือนภัยสำคัญ:'));
   assert.ok(!text.includes('0°C'));
   assert.ok(!text.includes('ที่มา: fallback'));
   const unknownDate = buildMorningDigestText({ tempMax: 30, source: 'TEST SOURCE', observedAt: null }, [], {}, midMonth);
@@ -181,7 +184,10 @@ function loadCron(mode = 'morning-only', plan = { status: 'ready', recipients: i
     },
     './utils/weather': { getReport: async () => { if(options.weatherError)throw options.weatherError;return { tempMax: 30, pm25: null, rainChance: null, temp: null }; } },
     './utils/appointments': { getToday: async () => [] },
-    './utils/todos': { getToday: async () => [] },
+    './utils/todos': {
+      getToday: async date => { state.todoTodayQueryDate = date; return options.todayTodos || []; },
+      getOverdue: async () => options.overdueTodos || [],
+    },
     './utils/alerts': { listActiveUrgentAlerts: async () => [],
       listUnsentUrgentAlerts: async () => { throw new Error('Unexpected alert push'); } },
     './utils/liveDisasters': { fetchLiveDisasterAlertCandidates: async () => [] },
@@ -217,7 +223,18 @@ test('successful digest goes only to budget-selected recipients once per day', a
   assert.equal(state.sends.length, 1);
   assert.equal(state.sends[0][3], ids[1]);
   assert.equal(state.sends[0][4].compact, true);
+  assert.equal(state.todoTodayQueryDate.toISOString(), '2026-10-16T17:00:00.000Z');
   assert.equal(state.run.status, 'success');
+});
+
+test('morning digest includes overdue work without extra pushes', async () => {
+  const { cron, state } = loadCron('morning-only', { status: 'ready', recipients: [ids[0]] }, {
+    overdueTodos: [{ title: 'งานค้างสำคัญ', priority: 'high' }],
+  });
+  assert.equal(await cron.sendDailyMorningReport(midMonth), true);
+  assert.equal(state.sends.length, 1);
+  const text = buildMorningDigestText({}, [], state.sends[0][2], midMonth);
+  assert.ok(text.includes('งานค้าง: งานค้างสำคัญ'));
 });
 
 test('quota exhaustion defers instead of sending or retrying every minute', async () => {
@@ -272,6 +289,9 @@ test('essential alerts exclude watch, inactive, unrelated and opted-out records'
   ], alert => alert.title !== 'opted out');
   assert.deepEqual(selected.map(item => item.title), ['TEST IMPORTANT', 'TEST NEWS']);
   assert.equal(selected[1].isIndexedNews, true);
+  const text = buildMorningDigestText({}, [], {}, midMonth, selected);
+  assert.ok(text.includes('แผ่นดินไหว: TEST IMPORTANT'));
+  assert.ok(text.includes('ข่าวเฝ้าระวัง: TEST NEWS'));
 });
 
 test('essential alert summary is limited to three and remains in a single compact text', () => {
@@ -280,7 +300,8 @@ test('essential alert summary is limited to three and remains in a single compac
   })));
   assert.equal(selected.length, 3);
   const text = buildMorningDigestText({}, [], {}, midMonth, selected);
-  assert.ok(text.includes('ประกาศสำคัญ:'));
+  assert.ok(text.includes('เตือนภัยสำคัญ:'));
+  assert.ok(text.includes('พายุ/ฝนรุนแรง:'));
   assert.ok(!text.includes('TEST NOTICE 3'));
   assert.ok(text.length < 4500);
 });

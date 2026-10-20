@@ -100,6 +100,7 @@ function getItemRecipient(item) {
 async function sendMorningReport(baseDate = new Date(), selectedRecipients = null) {
   try {
     const dateKey = getBangkokDateKey(baseDate);
+    const dayStart = new Date(`${dateKey}T00:00:00+07:00`);
     const recipients = selectedRecipients || (await morningBudget.checkMorningBudget(
       await getActiveLineRecipients({ morningReportOnly: true }), baseDate
     )).recipients;
@@ -112,7 +113,8 @@ async function sendMorningReport(baseDate = new Date(), selectedRecipients = nul
     for (const recipient of recipients) {
       try {
         const appointmentsToday = await appointments.getToday(baseDate, { lineUserId: recipient });
-        const todosToday = await todos.getToday(baseDate, { lineUserId: recipient });
+        const todosToday = await todos.getToday(dayStart, { lineUserId: recipient });
+        const overdueTodos = await todos.getOverdue(baseDate, { lineUserId: recipient });
         const profile = await lineRecipient.getLineRecipient(recipient);
         const essentialAlerts = selectEssentialAlerts(activeAlerts,
           alert => lineRecipient.matchesAlertPreferences(profile, alert));
@@ -130,7 +132,13 @@ async function sendMorningReport(baseDate = new Date(), selectedRecipients = nul
             responsible: item.responsible,
             priority: item.priority || 'normal'
           })),
-          overdue: []
+          overdue: overdueTodos.map(item => ({
+            id: item._id,
+            title: item.title || '-',
+            dueAt: item.dueAt,
+            responsible: item.responsible,
+            priority: item.priority || 'normal'
+          }))
         };
 
         await line.sendMorningGreeting({

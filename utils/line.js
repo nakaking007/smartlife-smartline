@@ -307,40 +307,40 @@ function buildTodoMorningText(todoSummary = {}) {
 
 function buildMorningDigestText(weather = {}, events = [], todoSummary = {}, reportDate = new Date(), essentialAlerts = []) {
   const label = value => String(value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 100);
+  const alertCategory = { earthquake: 'แผ่นดินไหว', storm: 'พายุ/ฝนรุนแรง', severe_accident: 'อุบัติภัย' };
   const weatherParts = [];
   if (Number.isFinite(weather.tempMax)) weatherParts.push(`สูงสุด ${weather.tempMax}°C`);
   if (Number.isFinite(weather.rainChance)) weatherParts.push(`ฝน ${weather.rainChance}%`);
   if (Number.isFinite(weather.pm25)) weatherParts.push(`PM2.5 ${weather.pm25} µg/m³`);
-  const lines = [
-    `SmartLife เช้า ${getBangkokDateKey(reportDate)}`,
-    weatherParts.length ? `อากาศ: ${weatherParts.join(' · ')}` : 'อากาศ: ยังดึงข้อมูลไม่ได้',
-  ];
+  const lines = [`SmartLife เช้า ${getBangkokDateKey(reportDate)}`];
   const todayEvents = Array.isArray(events) ? events : [];
-  if (todayEvents.length) {
-    lines.push('นัดหมายวันนี้:');
-    todayEvents.slice(0, 3).forEach(event => lines.push(`• ${label(event.start)} ${label(event.summary)}`));
-    if (todayEvents.length > 3) lines.push(`และอีก ${todayEvents.length - 3} นัด — ดูเมนูวันนี้`);
-  } else {
-    lines.push('ไม่มีนัดหมายวันนี้');
-  }
+  const overdue = Array.isArray(todoSummary.overdue) ? todoSummary.overdue : [];
   const tasks = (Array.isArray(todoSummary.today) ? [...todoSummary.today] : [])
-    .sort((a, b) => Number(b.priority === 'high') - Number(a.priority === 'high'));
-  if (tasks.length) {
-    lines.push(`งานวันนี้: ${tasks.slice(0, 3).map(task => label(task.title)).join(' / ')}`);
-    if (tasks.length > 3) lines.push(`และอีก ${tasks.length - 3} งาน — ดูเมนูวันนี้`);
+    .sort((a, b) => Number(['urgent', 'high'].includes(b.priority)) - Number(['urgent', 'high'].includes(a.priority)));
+  if (todayEvents.length || overdue.length || tasks.length) {
+    lines.push('ต้องทำ:');
+    todayEvents.slice(0, 3).forEach(event => lines.push(`• ${label(event.start)} ${label(event.summary)}`));
+    if (todayEvents.length > 3) lines.push(`• อีก ${todayEvents.length - 3} นัดหมาย`);
+    overdue.slice(0, 2).forEach(task => lines.push(`• งานค้าง: ${label(task.title)}`));
+    if (overdue.length > 2) lines.push(`• อีก ${overdue.length - 2} งานค้าง`);
+    tasks.slice(0, 3).forEach(task => lines.push(`• งานวันนี้: ${label(task.title)}`));
+    if (tasks.length > 3) lines.push(`• อีก ${tasks.length - 3} งานวันนี้`);
   }
+  lines.push(weatherParts.length ? `อากาศ: ${weatherParts.join(' · ')}` : 'อากาศ: ยังดึงข้อมูลไม่ได้');
   if (essentialAlerts.length) {
-    lines.push('ประกาศสำคัญ:');
+    lines.push('เตือนภัยสำคัญ:');
     essentialAlerts.slice(0, 3).forEach(alert => lines.push(
-      `• ${alert.isIndexedNews ? 'ข่าวเฝ้าระวัง: ' : ''}${label(alert.title)}${alert.areaText ? ` · ${label(alert.areaText)}` : ''} (${label(alert.source)})`
+      `• ${alert.isIndexedNews ? 'ข่าวเฝ้าระวัง' : alertCategory[alert.type] || 'เหตุสำคัญ'}: ${label(alert.title)}${alert.areaText ? ` · ${label(alert.areaText)}` : ''}${alert.source ? ` (${label(alert.source)})` : ''}`
     ));
-    lines.push('ดูต้นทางและเวลาประกาศในเมนูเตือนภัย');
   }
   if (weatherParts.length && weather.source && weather.source !== 'fallback') {
     const observed = weather.observedAt ? new Date(weather.observedAt) : new Date(NaN);
     lines.push(`ที่มา: ${label(weather.source)}${Number.isNaN(observed.getTime()) ? '' : ` · ${formatBangkokDateTime(observed)}`}`);
     if (weather.sourceUrl && /^https:\/\//.test(weather.sourceUrl)) lines.push(weather.sourceUrl);
     if (weather.licenseUrl && /^https:\/\//.test(weather.licenseUrl)) lines.push(`เครดิต CC BY 4.0: ${weather.licenseUrl}`);
+  }
+  if (todayEvents.length || overdue.length || tasks.length || essentialAlerts.length) {
+    lines.push('รายละเอียด: เมนูวันนี้ / เตือนภัย');
   }
   return lines.join('\n');
 }
