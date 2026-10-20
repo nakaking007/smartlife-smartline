@@ -995,12 +995,12 @@ async function buildWeatherAssessmentMessage(location) {
       detail: [
         `พื้นที่: ${report.locationName || 'Bangkok'}`,
         `เวลาไทย: ${formatBangkokDate(report.observedAt)}`,
-        `อุณหภูมิ: ${formatWeatherValue(report.temp, '°C')} | สูงสุด 24 ชม.: ${formatWeatherValue(report.tempMax, '°C')} (${report.tempAssessment.level})`,
-        `ฝนล่าสุด 1 ชม.: ${formatWeatherValue(report.rainMm1h, ' มม.')} (${report.rainAmountAssessment.level})`,
-        `โอกาสฝน 12 ชม.: ${formatWeatherValue(report.rainChance, '%')} (${report.rainChanceAssessment.level})`,
-        `ลม/พายุ: ${formatWeatherValue(report.windSpeedKph, ' กม./ชม.')} (${report.stormAssessment.level})`,
-        `PM2.5: ${formatWeatherValue(report.pm25, ' µg/m³')} (${report.pm25Assessment.level})`,
-        `หน้ากาก: ${report.pm25Assessment.maskAdvice}`,
+        `อุณหภูมิ: ${formatWeatherValue(report.temp, '°C')} | สูงสุด 24 ชม.: ${formatWeatherValue(report.tempMax, '°C')} (${report.tempAssessment?.level || 'ยังไม่ประเมิน'})`,
+        `ฝนล่าสุด 1 ชม.: ${formatWeatherValue(report.rainMm1h, ' มม.')} (${report.rainAmountAssessment?.level || 'ยังไม่ประเมิน'})`,
+        `โอกาสฝน 12 ชม.: ${formatWeatherValue(report.rainChance, '%')} (${report.rainChanceAssessment?.level || 'ยังไม่ประเมิน'})`,
+        `ลม/พายุ: ${formatWeatherValue(report.windSpeedKph, ' กม./ชม.')} (${report.stormAssessment?.level || 'ยังไม่ประเมิน'})`,
+        `PM2.5: ${formatWeatherValue(report.pm25, ' µg/m³')} (${report.pm25Assessment?.level || 'ยังไม่ประเมิน'})`,
+        ...(report.pm25Assessment?.maskAdvice ? [`หน้ากาก: ${report.pm25Assessment.maskAdvice}`] : []),
         `ที่มา: ${report.source || 'แหล่งข้อมูลอากาศ'}`
       ].join("\n"),
       command: '/สภาพอากาศ',
@@ -1010,7 +1010,7 @@ async function buildWeatherAssessmentMessage(location) {
     return buildCommandOutputMessage({
       title: 'สภาพอากาศ',
       available: false,
-      detail: `ไม่มีข้อมูลอากาศจริงตอนนี้\nสาเหตุ: ${err.message}\nระบบจะไม่เดาค่าแทนข้อมูลจริง`,
+      detail: 'ไม่มีข้อมูลอากาศจริงตอนนี้\nระบบจะไม่เดาค่าแทนข้อมูลจริง',
       command: '/สภาพอากาศ',
       actionLabel: 'ลองใหม่'
     });
@@ -2010,12 +2010,12 @@ async function handleTextMessage(event) {
       await line.replyMessage(event.replyToken, buildCommandOutputMessage({
         title: command || 'AI',
         available: false,
-        detail: `ตอนนี้สมอง AI ยังตอบไม่ได้ค่ะ: ${err.message}`,
+        detail: 'ตอนนี้ AI ยังตอบไม่ได้ค่ะ กรุณาลองใหม่ภายหลัง',
         command: '/คำถาม',
         actionLabel: 'ลองใหม่'
       }));
     } else {
-      await line.reply(event.replyToken, `ตอนนี้สมอง AI ยังตอบไม่ได้ค่ะ: ${err.message}`);
+      await line.reply(event.replyToken, 'ตอนนี้ AI ยังตอบไม่ได้ค่ะ กรุณาลองใหม่ภายหลัง');
     }
     return true;
   }

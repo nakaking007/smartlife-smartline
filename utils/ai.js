@@ -53,7 +53,7 @@ function getRequestedProviderOrder() {
   if (provider === 'auto') {
     const requested = normalizeProviderList(config.aiFallbackProviders)
       .filter(item => VALID_TEXT_PROVIDERS.includes(item));
-    if (!requested.includes('pollinations')) {
+    if (config.pollinationsApiKey && !requested.includes('pollinations')) {
       requested.push('pollinations');
     }
     return requested;
@@ -67,7 +67,7 @@ function isProviderConfigured(provider) {
   if (provider === 'groq') return Boolean(config.groqApiKey);
   if (provider === 'openrouter') return Boolean(config.openrouterApiKey);
   if (provider === 'huggingface') return Boolean(config.huggingFaceToken);
-  if (provider === 'pollinations') return true;
+  if (provider === 'pollinations') return Boolean(config.pollinationsApiKey);
   if (provider === 'ollama') return Boolean(config.ollamaBaseUrl && config.ollamaModel);
 
   return false;
@@ -92,7 +92,7 @@ function getProviderLabel(provider) {
 }
 
 function getProviderSummary() {
-  const requested = getRequestedProviderOrder();
+  const requested = getConfiguredProviderOrder();
 
   if (!requested.length) {
     return 'none';
@@ -171,9 +171,21 @@ function extractGeminiText(data) {
   return parts.map(part => part.text || '').join('').trim();
 }
 
+function needsCurrentSources(text) {
+  return /วันนี้|ล่าสุด|ปัจจุบัน|ตอนนี้|เมื่อไร|เท่าไร|ข่าว|ราคา|current|latest|today|news|price/i.test(String(text || ''));
+}
+
+function getGroundingSources(data) {
+  const chunks = data?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+  return [...new Map(chunks.map(item => item.web).filter(web => {
+    try { return new URL(web.uri).protocol === 'https:'; } catch (_) { return false; }
+  }).map(web => [web.uri, web.title || web.uri])).entries()].slice(0, 3);
+}
+
 async function chatWithGemini(userText, history, systemPrompt) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.geminiModel)}:generateContent`;
-  const res = await axios.post(url, {
+  const useSearch = config.geminiGoogleSearchEnabled && needsCurrentSources(userText);
+  const request = {
     systemInstruction: {
       parts: [{ text: systemPrompt }]
     },
@@ -182,14 +194,20 @@ async function chatWithGemini(userText, history, systemPrompt) {
       temperature: 0.4,
       maxOutputTokens: 900
     }
-  }, {
+  };
+  if (useSearch) request.tools = [{ google_search: {} }];
+  const res = await axios.post(url, request, {
     headers: {
       'x-goog-api-key': config.geminiApiKey
     },
     timeout: 30000
   });
 
-  return extractGeminiText(res.data);
+  const answer = extractGeminiText(res.data);
+  const sources = useSearch ? getGroundingSources(res.data) : [];
+  return answer && sources.length
+    ? `${answer}\n\nแหล่งข้อมูล: ${sources.map(([uri, title]) => `${title} ${uri}`).join(' | ')}`
+    : answer;
 }
 
 function extractOpenAiChatText(data) {
@@ -254,62 +272,7 @@ async function chatWithHuggingFace(userText, history, systemPrompt) {
 
 async function chatWithPollinations(userText, history, systemPrompt, options = {}) {
   if (!config.pollinationsApiKey) {
-    const shouldTranslateRoundTrip = options.translateThaiRoundTrip === true && hasThaiText(userText);
-    let promptUserText = userText;
-
-    if (shouldTranslateRoundTrip) {
-      try {
-        promptUserText = await translateWithMyMemoryRaw(userText, 'th|en');
-      } catch (err) {
-        console.warn(`SmartLife Pollinations pre-translate fallback: ${getSafeErrorMessage(err)}`);
-      }
-    }
-
-    const legacySystemPrompt = [
-      'You are SmartLife AI in a LINE bot.',
-      systemPrompt,
-      'Answer directly in the language requested by the user; preserve conversation context.',
-      'Be practical and concise.',
-      'Do not talk about appointments unless the user asks about appointments or reminders.',
-      'For medical, legal, financial, or disaster topics, be careful and say when official sources should be checked.'
-    ].join('\n');
-    const legacyPrompt = [
-      legacySystemPrompt,
-      '',
-      history.slice(-6).map(item => (
-        `${item.role === 'assistant' ? 'Assistant' : 'User'}: ${item.content}`
-      )).join('\n').slice(-1000),
-      `User: ${promptUserText}`,
-      'Assistant:'
-    ].join('\n');
-    const res = await axios.get(`https://text.pollinations.ai/${encodeURIComponent(legacyPrompt)}`, {
-      params: {
-        model: config.pollinationsTextModel || 'openai'
-      },
-      timeout: 60000,
-      responseType: 'text'
-    });
-
-    if (res.data && typeof res.data === 'object' && res.data.error) {
-      throw new Error(res.data.error);
-    }
-
-    const answer = String(res.data || '').trim();
-
-    if (shouldTranslateRoundTrip && answer && !hasThaiText(answer)) {
-      try {
-        const translatedAnswer = await translateWithMyMemoryRaw(answer, 'en|th');
-        return [
-          translatedAnswer,
-          '',
-          'ที่มา: Pollinations free text + MyMemory translation'
-        ].join('\n');
-      } catch (err) {
-        console.warn(`SmartLife Pollinations post-translate fallback: ${getSafeErrorMessage(err)}`);
-      }
-    }
-
-    return answer;
+    throw new Error('Pollinations API key is not configured');
   }
 
   const res = await axios.post('https://gen.pollinations.ai/v1/chat/completions', {

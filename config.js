@@ -19,6 +19,8 @@ module.exports = {
   aiMaxHistory: Number(process.env.AI_MAX_HISTORY) || 12,
   geminiApiKey: process.env.GEMINI_API_KEY,
   geminiModel: process.env.GEMINI_MODEL || process.env.AI_MODEL || 'gemini-2.5-flash',
+  // Enable only after confirming the Google API key's billing tier and quotas.
+  geminiGoogleSearchEnabled: process.env.GEMINI_GOOGLE_SEARCH_ENABLED === 'true',
   groqApiKey: process.env.GROQ_API_KEY,
   groqModel: process.env.GROQ_MODEL || process.env.AI_MODEL || 'llama-3.1-8b-instant',
   openrouterApiKey: process.env.OPENROUTER_API_KEY,

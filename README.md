@@ -493,6 +493,7 @@ AI_PROVIDER=auto
 AI_FALLBACK_PROVIDERS=gemini,groq,openrouter,huggingface,pollinations
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.5-flash
+GEMINI_GOOGLE_SEARCH_ENABLED=false
 AI_MAX_HISTORY=12
 
 # ทางเลือกอื่นสำหรับแชต/แปล
@@ -517,7 +518,8 @@ LIFF_ID=your_liff_id
 - ถ้าต้องการลองรุ่นใหม่ของ Gemini ให้เปลี่ยน `GEMINI_MODEL` เป็นรุ่น preview ที่บัญชีรองรับ เช่น `gemini-3-flash-preview`; ถ้าเน้นเสถียรให้ใช้ `gemini-2.5-flash`
 - `Groq` เหมาะเมื่ออยากได้คำตอบเร็วและมี free plan แต่ต้องดู rate limit ของบัญชีจริง
 - `OpenRouter` ตั้ง `OPENROUTER_MODEL=openrouter/free` เพื่อให้ OpenRouter เลือกโมเดลฟรีที่ยังใช้ได้ให้อัตโนมัติ
-- `Pollinations Text` ใช้เป็น AI สำรองฟรีได้ แม้ไม่มี key โดยมีข้อจำกัดคิวสาธารณะ
+- `Pollinations Text` เป็น AI สำรองเมื่อมี API key ที่ใช้ได้ ระบบไม่เรียก endpoint เก่าที่ไม่ยืนยันตัวตน
+- `GEMINI_GOOGLE_SEARCH_ENABLED=true` เปิด Google Search grounding เฉพาะคำถามที่ต้องใช้ข้อมูลปัจจุบัน พร้อมแหล่งอ้างอิงเมื่อ API ส่งมา ตรวจสอบ billing tier และโควตาของ Google ก่อนเปิดใช้ ค่าเริ่มต้นปิดไว้
 - `Ollama` เหมาะเมื่ออยากรันฟรีในเครื่อง ไม่ส่งข้อความออกนอกเครื่อง แต่ต้องมีเครื่องที่แรงพอ และควรเพิ่ม `ollama` ใน `AI_FALLBACK_PROVIDERS` เฉพาะตอนเปิด Ollama แล้ว
 - `Hugging Face Inference Providers` เหมาะสำหรับทดลองหลายโมเดลและใช้ token เดียวผ่าน router ของ Hugging Face
 
